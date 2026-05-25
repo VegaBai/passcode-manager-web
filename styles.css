@@ -270,8 +270,21 @@ button {
 }
 
 .refresh-above-courts {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   width: 100%;
   margin-bottom: 8px;
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+  font-weight: 700;
+}
+
+.refresh-icon {
+  font-size: 17px;
+  line-height: 1;
 }
 
 .field {
@@ -432,6 +445,13 @@ button {
 .add-account-form .btn {
   width: 100%;
   min-width: 0;
+}
+
+.add-account-warning {
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .list-section {

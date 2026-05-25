@@ -858,7 +858,6 @@ function addQueueEntry(state, context, payload) {
 }
 
 function cancelQueueEntry(state, context, payload) {
-  requireLoggedIn(context);
   const groupId = payload.groupId;
   enterGroup(state, groupId, context);
   const entry = getDoc(state, 'queueEntries', payload.queueEntryId);
@@ -873,9 +872,7 @@ function cancelQueueEntry(state, context, payload) {
   if (new Set(cancelCredentialIds).size !== cancelCredentialIds.length) throw new Error('不能重复选择账号');
   if (cancelCredentialIds.some((id) => !existingCredentialIds.includes(id))) throw new Error('只能取消这一组里的账号');
   const cancelCredentials = cancelCredentialIds.map((id) => getDoc(state, 'credentials', id));
-  if (cancelCredentials.some((credential) => !credential || credential.createdByUserId !== context.user._id)) {
-    throw new Error('只能取消自己登录后添加的账号');
-  }
+  if (cancelCredentials.some((credential) => !credential)) throw new Error('账号数据不完整');
 
   const remainingCredentialIds = existingCredentialIds.filter((id) => !cancelCredentialIds.includes(id));
   if (remainingCredentialIds.length) {

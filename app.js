@@ -537,7 +537,7 @@ function buildCredentials() {
       createdAtTs: toDate(item.createdAt)?.getTime() || 0,
       canManage: Boolean(isOwner && item.status === 'idle'),
       canDelete: Boolean((isOwner || canAdminDelete) && item.status === 'idle'),
-      canCancelQueue: Boolean(isOwner && (item.status === 'playing' || item.status === 'queued'))
+      canCancelQueue: Boolean(item.status === 'playing' || item.status === 'queued')
     };
   });
 
@@ -736,7 +736,7 @@ function renderDashboard() {
 
     <div class="content-grid">
       <section>
-        <button class="btn refresh-above-courts" data-action="refresh">${state.loading ? '刷新中' : '刷新'}</button>
+        <button class="btn refresh-above-courts" data-action="refresh"><span class="refresh-icon" aria-hidden="true">↻</span>${state.loading ? '刷新中' : '刷新'}</button>
         <h2 class="section-title">
           <span>场地</span>
           <span class="section-hint">手动录入可能与球馆系统有时间误差</span>
@@ -827,6 +827,7 @@ function renderAddAccount() {
         <input id="password" class="input" maxlength="32" placeholder="密码" aria-label="密码" value="${html(state.form.password)}" data-field="password" />
         <button class="btn primary" data-action="add-credential">确定</button>
       </div>
+      ${state.user ? '' : '<div class="add-account-warning">仅登录后添加的密码可修改和删除</div>'}
     </div>
   `;
 }
@@ -895,8 +896,7 @@ function renderCancelModal() {
   if (!entry) return '';
   const credentialsById = Object.fromEntries(state.credentials.map((item) => [item._id, item]));
   const options = (entry.credentialIds || [])
-    .map((id) => credentialsById[id] || { _id: id, username: id, password: '' })
-    .filter((credential) => state.user && credential.createdByUserId === state.user._id);
+    .map((id) => credentialsById[id] || { _id: id, username: id, password: '' });
   const canConfirm = state.cancelSelectedIds.size === 2 || state.cancelSelectedIds.size === 4;
   return `
     <div class="overlay bottom">
