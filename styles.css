@@ -215,11 +215,16 @@ button {
 
 .court-stat.playing {
   background: var(--brand-soft);
-  padding: 12px;
+  padding: 16px;
+  margin-bottom: 10px;
 }
 
 .court-title {
   font-weight: 700;
+}
+
+.court-stat.playing .court-title {
+  font-size: 18px;
 }
 
 .court-hint {
@@ -234,6 +239,11 @@ button {
   color: var(--muted);
 }
 
+.court-stat.playing .court-line {
+  gap: 12px;
+  margin-top: 8px;
+}
+
 .court-chip {
   color: var(--text);
   font-size: 21px;
@@ -245,6 +255,14 @@ button {
   color: var(--muted-2);
   font-size: 13px;
   font-weight: 700;
+}
+
+.court-stat.playing .court-chip {
+  font-size: 28px;
+}
+
+.court-stat.playing .court-chip small {
+  font-size: 16px;
 }
 
 .queue-toggle {
