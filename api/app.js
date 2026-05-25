@@ -17,7 +17,8 @@ const memoryStore = {
   operationLogs: [],
   users: [],
   sessions: [],
-  playHistory: []
+  playHistory: [],
+  adminEmails: []
 };
 
 const ptDateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -116,7 +117,8 @@ function normalizeState(state) {
     operationLogs: Array.isArray(state.operationLogs) ? state.operationLogs : [],
     users: Array.isArray(state.users) ? state.users : [],
     sessions: Array.isArray(state.sessions) ? state.sessions : [],
-    playHistory: Array.isArray(state.playHistory) ? state.playHistory : []
+    playHistory: Array.isArray(state.playHistory) ? state.playHistory : [],
+    adminEmails: normalizeAdminEmails(state.adminEmails)
   };
 }
 
@@ -193,23 +195,42 @@ async function saveState(state) {
   });
 }
 
-function publicUser(user) {
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function normalizeAdminEmails(emails) {
+  return Array.from(new Set((Array.isArray(emails) ? emails : [])
+    .map(normalizeEmail)
+    .filter(Boolean)
+    .filter((email) => !SUPER_ADMIN_EMAILS.has(email))))
+    .sort();
+}
+
+function isSuperAdmin(user) {
+  return SUPER_ADMIN_EMAILS.has(normalizeEmail(user?.email));
+}
+
+function isRegularAdmin(state, user) {
+  return normalizeAdminEmails(state.adminEmails).includes(normalizeEmail(user?.email));
+}
+
+function isAccountAdmin(state, user) {
+  return isSuperAdmin(user) || isRegularAdmin(state, user);
+}
+
+function publicUser(user, state) {
   if (!user) return null;
+  const superAdmin = isSuperAdmin(user);
   return {
     _id: user._id,
     email: user.email,
     displayName: user.displayName || '',
     name: user.name || '',
-    isSuperAdmin: isSuperAdmin(user)
+    isSuperAdmin: superAdmin,
+    isAdmin: isAccountAdmin(state, user),
+    adminEmails: superAdmin ? normalizeAdminEmails(state.adminEmails) : []
   };
-}
-
-function normalizeEmail(email) {
-  return String(email || '').trim().toLowerCase();
-}
-
-function isSuperAdmin(user) {
-  return SUPER_ADMIN_EMAILS.has(normalizeEmail(user?.email));
 }
 
 function actorId(context) {
@@ -251,6 +272,11 @@ function enterGroup(state, groupId, context) {
 
 function requireLoggedIn(context) {
   if (!context.user) throw new Error('请先登录');
+}
+
+function requireSuperAdmin(context) {
+  requireLoggedIn(context);
+  if (!isSuperAdmin(context.user)) throw new Error('只有总管理员可以管理管理员');
 }
 
 function logOperation(state, context, groupId, action, detail) {
@@ -462,7 +488,7 @@ async function loginGoogle(state, context, payload) {
   });
   if (state.sessions.length > 1000) state.sessions = state.sessions.slice(-1000);
 
-  return { sessionToken: token, user: publicUser(user), groups: listGroups(state, { ...context, user }) };
+  return { sessionToken: token, user: publicUser(user, state), groups: listGroups(state, { ...context, user }) };
 }
 
 function logout(state, context) {
@@ -478,13 +504,34 @@ function updateProfile(state, context, payload) {
   if (displayName.length > 32) throw new Error('display name 不能超过 32 个字符');
   context.user.displayName = displayName;
   context.user.updatedAt = nowIso();
-  return { user: publicUser(context.user) };
+  return { user: publicUser(context.user, state) };
+}
+
+function addAdminEmail(state, context, payload) {
+  requireSuperAdmin(context);
+  const email = normalizeEmail(payload.email);
+  if (!email || !email.includes('@')) throw new Error('请输入有效邮箱');
+  if (SUPER_ADMIN_EMAILS.has(email)) throw new Error('总管理员不需要重复添加');
+
+  state.adminEmails = normalizeAdminEmails([...(state.adminEmails || []), email]);
+  logOperation(state, context, '', 'addAdminEmail', { email });
+  return { user: publicUser(context.user, state) };
+}
+
+function removeAdminEmail(state, context, payload) {
+  requireSuperAdmin(context);
+  const email = normalizeEmail(payload.email);
+  if (!email) throw new Error('缺少管理员邮箱');
+
+  state.adminEmails = normalizeAdminEmails(state.adminEmails).filter((item) => item !== email);
+  logOperation(state, context, '', 'removeAdminEmail', { email });
+  return { user: publicUser(context.user, state) };
 }
 
 function myHistory(state, context) {
   requireLoggedIn(context);
   return {
-    user: publicUser(context.user),
+    user: publicUser(context.user, state),
     groups: listGroups(state, context),
     history: state.playHistory.filter((item) => item.userId === context.user._id)
   };
@@ -494,7 +541,7 @@ function init(state, context) {
   advanceExpired(state);
   return {
     memberId: context.memberId,
-    user: publicUser(context.user),
+    user: publicUser(context.user, state),
     groups: listGroups(state, context),
     storage: storageMode()
   };
@@ -532,7 +579,7 @@ function getDashboard(state, context, payload) {
   advanceExpired(state);
   return {
     currentGroup: group,
-    user: publicUser(context.user),
+    user: publicUser(context.user, state),
     groups: listGroups(state, context),
     credentials: state.credentials
       .filter((item) => item.groupId === payload.groupId && !item.deletedAt)
@@ -617,7 +664,7 @@ function deleteCredential(state, context, payload) {
   enterGroup(state, groupId, context);
   const credential = getDoc(state, 'credentials', payload.credentialId);
   if (!credential || credential.groupId !== groupId || credential.deletedAt) throw new Error('账号不存在');
-  if (credential.createdByUserId !== context.user._id && !isSuperAdmin(context.user)) throw new Error('只能删除自己登录后添加的账号');
+  if (credential.createdByUserId !== context.user._id && !isAccountAdmin(state, context.user)) throw new Error('只能删除自己登录后添加的账号');
   if (credential.status !== 'idle') throw new Error('排队或正在打的账号不能删除');
 
   credential.deletedAt = nowIso();
@@ -923,6 +970,8 @@ module.exports = async function handler(req, res) {
       loginGoogle,
       logout,
       updateProfile,
+      addAdminEmail,
+      removeAdminEmail,
       myHistory,
       init,
       createGroup,

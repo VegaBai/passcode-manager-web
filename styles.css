@@ -683,6 +683,23 @@ button {
   gap: 8px;
 }
 
+.admin-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text);
+  font-size: 14px;
+}
+
 .hidden {
   display: none;
 }

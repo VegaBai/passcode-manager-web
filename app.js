@@ -25,6 +25,7 @@ const state = {
   form: {
     groupName: 'Fremont Bintang',
     displayName: '',
+    adminEmail: '',
     editUsername: '',
     editPassword: '',
     username: '',
@@ -380,6 +381,34 @@ async function saveProfile() {
   }
 }
 
+async function addAdminEmail() {
+  const email = state.form.adminEmail.trim();
+  if (!email) {
+    showToast('请输入管理员邮箱');
+    return;
+  }
+  try {
+    const result = await callApi('addAdminEmail', { email });
+    state.user = result.user || state.user;
+    state.form.adminEmail = '';
+    showToast('管理员已添加');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
+async function removeAdminEmail(email) {
+  try {
+    const result = await callApi('removeAdminEmail', { email });
+    state.user = result.user || state.user;
+    showToast('管理员已删除');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
 async function loadMyHistory() {
   if (!state.user) return;
   try {
@@ -488,7 +517,7 @@ function buildCredentials() {
   const entriesById = Object.fromEntries(state.queueEntries.map((entry) => [entry._id, entry]));
   const statusText = { idle: '空闲', playing: '正在打', queued: '排队中' };
   const statusRank = { idle: 0, playing: 1, queued: 2 };
-  const canAdminDelete = Boolean(state.user?.isSuperAdmin);
+  const canAdminDelete = Boolean(state.user?.isAdmin);
 
   const mapped = state.credentials.map((item) => {
     const entry = item.currentQueueEntryId ? entriesById[item.currentQueueEntryId] : null;
@@ -906,6 +935,29 @@ function buildHeatmap() {
   return days;
 }
 
+function renderAdminPanel() {
+  if (!state.user?.isSuperAdmin) return '';
+  const adminEmails = state.user.adminEmails || [];
+  return `
+    <h3 class="settings-subtitle">管理员</h3>
+    <div class="inline-form">
+      <div class="field">
+        <label for="admin-email">常规管理员邮箱</label>
+        <input id="admin-email" class="input" type="email" value="${html(state.form.adminEmail)}" data-field="adminEmail" />
+      </div>
+      <button class="btn primary" data-action="add-admin">添加</button>
+    </div>
+    <div class="admin-list">
+      ${adminEmails.length ? adminEmails.map((email) => `
+        <div class="admin-row">
+          <span>${html(email)}</span>
+          <button class="btn danger" data-action="remove-admin" data-email="${html(email)}">删除</button>
+        </div>
+      `).join('') : '<div class="empty">暂无常规管理员</div>'}
+    </div>
+  `;
+}
+
 function renderSettingsModal() {
   if (state.modal !== 'settings') return '';
   if (!state.user) {
@@ -940,6 +992,7 @@ function renderSettingsModal() {
         <div class="heatmap" aria-label="打球历史热力图">
           ${heatmap.map((day) => `<span class="heat heat-${day.level}" title="${html(day.key)} · ${day.count} 次"></span>`).join('')}
         </div>
+        ${renderAdminPanel()}
         <h3 class="settings-subtitle">参与过的球群</h3>
         <div class="settings-groups">
           ${state.groups.length ? state.groups.map((group) => `
@@ -1092,6 +1145,8 @@ function bindEvents() {
         render();
       }
       if (action === 'save-profile') await saveProfile();
+      if (action === 'add-admin') await addAdminEmail();
+      if (action === 'remove-admin') await removeAdminEmail(event.currentTarget.dataset.email);
       if (action === 'logout') await logout();
     });
   });
