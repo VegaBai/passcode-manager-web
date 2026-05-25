@@ -627,6 +627,29 @@ function renderCourtItems(items, emptyText) {
   `).join('')}</div>`;
 }
 
+function renderQueueInfoContent(courtPreview) {
+  return `
+    <div>第 ${courtPreview.nextGroupNo} 组</div>
+    ${!courtPreview.hasTrackedCourt ? `<div>当前剩余 ${courtPreview.remainingMinutes} 分钟</div>` : ''}
+    <div>预计等待 ${courtPreview.waitMinutes} 分钟</div>
+  `;
+}
+
+function renderQueueInfo(courtPreview) {
+  return `<div class="queue-info" data-queue-info>${renderQueueInfoContent(courtPreview)}</div>`;
+}
+
+function updateQueueInfo() {
+  const queueInfo = app.querySelector('[data-queue-info]');
+  if (!queueInfo) return;
+  queueInfo.innerHTML = renderQueueInfoContent(buildCourtPreview());
+}
+
+function isEditingFormField() {
+  const activeElement = document.activeElement;
+  return Boolean(activeElement?.matches?.('[data-field]'));
+}
+
 function renderJoinBanner() {
   if (!state.joinGroupId || state.groups.some((group) => group._id === state.joinGroupId)) return '';
   return `
@@ -737,11 +760,7 @@ function renderQueuePanel(idleCredentials, courtPreview, halfGroupOptions) {
             <input id="ahead" class="input" type="number" min="0" max="20" value="${html(state.form.courtAheadGroups)}" data-field="courtAheadGroups" />
           </div>
         ` : ''}
-        <div class="queue-info">
-          <div>第 ${courtPreview.nextGroupNo} 组</div>
-          ${!courtPreview.hasTrackedCourt ? `<div>当前剩余 ${courtPreview.remainingMinutes} 分钟</div>` : ''}
-          <div>预计等待 ${courtPreview.waitMinutes} 分钟</div>
-        </div>
+        ${renderQueueInfo(courtPreview)}
       </div>
       ${halfGroupOptions.length ? `
         <div class="half-panel">
@@ -986,9 +1005,14 @@ function render() {
 function bindEvents() {
   app.querySelectorAll('[data-field]').forEach((input) => {
     input.addEventListener('input', (event) => {
-      state.form[event.currentTarget.dataset.field] = event.currentTarget.value;
-      if (['courtName', 'courtRemainingMinutes', 'courtAheadGroups'].includes(event.currentTarget.dataset.field)) render();
+      const field = event.currentTarget.dataset.field;
+      state.form[field] = event.currentTarget.value;
+      if (field === 'courtName') state.form.targetQueueEntryId = '';
+      if (['courtName', 'courtRemainingMinutes', 'courtAheadGroups'].includes(field)) updateQueueInfo();
     });
+    if (input.dataset.field === 'courtName') {
+      input.addEventListener('change', render);
+    }
   });
 
   app.querySelectorAll('[data-select]').forEach((input) => {
@@ -1082,7 +1106,8 @@ function bindEvents() {
 
 setInterval(() => {
   state.nowTs = Date.now();
-  render();
+  if (isEditingFormField()) updateQueueInfo();
+  else render();
 }, 30000);
 
 render();
