@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/app.js": {
-      "runtime": "nodejs20.x"
-    }
-  },
   "rewrites": [
     {
       "source": "/api/:path*",
