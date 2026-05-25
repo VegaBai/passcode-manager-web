@@ -20,27 +20,20 @@ npm run dev
 
 打开 [http://localhost:3000](http://localhost:3000)。
 
-本地未配置 Redis 时会使用内存存储，重启服务后数据会清空。
+本地未配置 Turso 时会使用内存存储，重启服务后数据会清空。
 
 ## 部署到 Vercel
 
 这个项目不需要构建步骤，直接导入 Vercel 即可。
 
-生产环境建议绑定 Vercel KV 或 Upstash Redis，并配置环境变量：
+生产环境建议绑定 Turso Cloud for Vercel。Vercel 集成会自动添加这些环境变量：
 
 ```text
-KV_REST_API_URL=...
-KV_REST_API_TOKEN=...
+TURSO_DATABASE_URL=...
+TURSO_AUTH_TOKEN=...
 ```
 
-也兼容 Upstash 原生命名：
-
-```text
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
-```
-
-如果没有配置 Redis，Vercel Serverless 会退回内存模式，数据可能随函数冷启动丢失，不适合正式使用。
+如果没有配置 Turso，Vercel Serverless 会退回内存模式，数据可能随函数冷启动丢失，不适合正式使用。
 
 如需启用 Google 登录，还需要在 Google Cloud Console 创建 Web OAuth Client，并在 Vercel 配置：
 

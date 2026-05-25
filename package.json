@@ -7,6 +7,9 @@
     "dev": "node dev-server.js",
     "check": "node --check api/app.js && node --check app.js"
   },
+  "dependencies": {
+    "@libsql/client": "^0.17.0"
+  },
   "engines": {
     "node": ">=20"
   }

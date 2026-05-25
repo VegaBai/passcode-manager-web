@@ -4,6 +4,10 @@ const ROUND_MINUTES = 45;
 const STORE_KEY = 'passcode-manager-web:v1';
 const PT_TIME_ZONE = 'America/Los_Angeles';
 const ALNUM = /^[A-Za-z0-9]+$/;
+const TURSO_STATE_TABLE = 'app_state';
+
+let tursoClient = null;
+let tursoSchemaPromise = null;
 
 const memoryStore = {
   groups: [],
@@ -115,40 +119,77 @@ function normalizeState(state) {
   };
 }
 
-async function redisCommand(command) {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+function getTursoClient() {
+  const url = process.env.TURSO_DATABASE_URL;
+  const authToken = process.env.TURSO_AUTH_TOKEN;
+  if (!url) return null;
 
-  const response = await fetch(`${url.replace(/\/$/, '')}/pipeline`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify([command])
-  });
-
-  if (!response.ok) {
-    throw new Error(`Redis REST 请求失败：${response.status}`);
+  if (!tursoClient) {
+    let createClient;
+    try {
+      ({ createClient } = require('@libsql/client'));
+    } catch (error) {
+      throw new Error('缺少 @libsql/client 依赖，请先运行 npm install');
+    }
+    tursoClient = createClient({
+      url,
+      authToken
+    });
   }
 
-  const result = await response.json();
-  return Array.isArray(result) ? result[0].result : result.result;
+  return tursoClient;
+}
+
+async function ensureTursoSchema(client) {
+  if (!tursoSchemaPromise) {
+    tursoSchemaPromise = client.execute(`
+      CREATE TABLE IF NOT EXISTS ${TURSO_STATE_TABLE} (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+  }
+  await tursoSchemaPromise;
+}
+
+function storageMode() {
+  return process.env.TURSO_DATABASE_URL ? 'turso' : 'memory';
 }
 
 async function loadState() {
-  const stored = await redisCommand(['GET', STORE_KEY]);
-  if (stored === null || stored === undefined) return clone(memoryStore);
+  const client = getTursoClient();
+  if (!client) return clone(memoryStore);
+
+  await ensureTursoSchema(client);
+  const result = await client.execute({
+    sql: `SELECT value FROM ${TURSO_STATE_TABLE} WHERE key = ? LIMIT 1`,
+    args: [STORE_KEY]
+  });
+  const stored = result.rows && result.rows[0] ? result.rows[0].value : null;
+  if (!stored) return clone(memoryStore);
   return normalizeState(typeof stored === 'string' ? JSON.parse(stored) : stored);
 }
 
 async function saveState(state) {
   const normalized = normalizeState(state);
-  const persisted = await redisCommand(['SET', STORE_KEY, JSON.stringify(normalized)]);
-  if (persisted === null) {
+  const client = getTursoClient();
+  if (!client) {
     Object.assign(memoryStore, clone(normalized));
+    return;
   }
+
+  await ensureTursoSchema(client);
+  await client.execute({
+    sql: `
+      INSERT INTO ${TURSO_STATE_TABLE} (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `,
+    args: [STORE_KEY, JSON.stringify(normalized), nowIso()]
+  });
 }
 
 function publicUser(user) {
@@ -364,7 +405,7 @@ function advanceExpired(state) {
 function config() {
   return {
     googleClientId: process.env.GOOGLE_CLIENT_ID || '',
-    storage: (process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) ? 'redis' : 'memory'
+    storage: storageMode()
   };
 }
 
@@ -445,7 +486,7 @@ function init(state, context) {
     memberId: context.memberId,
     user: publicUser(context.user),
     groups: listGroups(state, context),
-    storage: (process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) ? 'redis' : 'memory'
+    storage: storageMode()
   };
 }
 
