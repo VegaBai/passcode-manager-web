@@ -5,6 +5,7 @@ const STORE_KEY = 'passcode-manager-web:v1';
 const PT_TIME_ZONE = 'America/Los_Angeles';
 const ALNUM = /^[A-Za-z0-9]+$/;
 const TURSO_STATE_TABLE = 'app_state';
+const SUPER_ADMIN_EMAILS = new Set(['vegabaixuan@gmail.com']);
 
 let tursoClient = null;
 let tursoSchemaPromise = null;
@@ -198,8 +199,17 @@ function publicUser(user) {
     _id: user._id,
     email: user.email,
     displayName: user.displayName || '',
-    name: user.name || ''
+    name: user.name || '',
+    isSuperAdmin: isSuperAdmin(user)
   };
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isSuperAdmin(user) {
+  return SUPER_ADMIN_EMAILS.has(normalizeEmail(user?.email));
 }
 
 function actorId(context) {
@@ -607,7 +617,7 @@ function deleteCredential(state, context, payload) {
   enterGroup(state, groupId, context);
   const credential = getDoc(state, 'credentials', payload.credentialId);
   if (!credential || credential.groupId !== groupId || credential.deletedAt) throw new Error('账号不存在');
-  if (credential.createdByUserId !== context.user._id) throw new Error('只能删除自己登录后添加的账号');
+  if (credential.createdByUserId !== context.user._id && !isSuperAdmin(context.user)) throw new Error('只能删除自己登录后添加的账号');
   if (credential.status !== 'idle') throw new Error('排队或正在打的账号不能删除');
 
   credential.deletedAt = nowIso();

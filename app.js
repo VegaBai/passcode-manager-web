@@ -488,10 +488,12 @@ function buildCredentials() {
   const entriesById = Object.fromEntries(state.queueEntries.map((entry) => [entry._id, entry]));
   const statusText = { idle: '空闲', playing: '正在打', queued: '排队中' };
   const statusRank = { idle: 0, playing: 1, queued: 2 };
+  const canAdminDelete = Boolean(state.user?.isSuperAdmin);
 
   const mapped = state.credentials.map((item) => {
     const entry = item.currentQueueEntryId ? entriesById[item.currentQueueEntryId] : null;
     let timeText = '';
+    const isOwner = Boolean(state.user && item.createdByUserId === state.user._id);
     if (item.status === 'playing' && entry) timeText = `剩余 ${minutesUntil(entry.endAt)} 分钟`;
     if (item.status === 'queued' && entry) timeText = `预计 ${formatClock(entry.startAt)} 上场`;
     return {
@@ -504,9 +506,9 @@ function buildCredentials() {
       ownerText: item.ownerDisplayName || item.createdByDisplayName || (item.createdByMemberId === state.memberId ? '未登录用户' : '群成员添加'),
       createdAtText: formatPTDateTime(item.createdAt),
       createdAtTs: toDate(item.createdAt)?.getTime() || 0,
-      canManage: Boolean(state.user && item.createdByUserId === state.user._id && item.status === 'idle'),
-      canDelete: Boolean(state.user && item.createdByUserId === state.user._id && item.status === 'idle'),
-      canCancelQueue: Boolean(state.user && item.createdByUserId === state.user._id && (item.status === 'playing' || item.status === 'queued'))
+      canManage: Boolean(isOwner && item.status === 'idle'),
+      canDelete: Boolean((isOwner || canAdminDelete) && item.status === 'idle'),
+      canCancelQueue: Boolean(isOwner && (item.status === 'playing' || item.status === 'queued'))
     };
   });
 
