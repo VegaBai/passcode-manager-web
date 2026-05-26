@@ -620,7 +620,7 @@ function getZeroGroupRemaining(entries) {
   if (hasManualRemainingMinutes()) return parseRemainingMinutes(state.form.courtRemainingMinutes);
   const playing = entries.find((entry) => entry.status === 'playing');
   if (playing) return minutesUntil(playing.endAt);
-  return 45;
+  return 0;
 }
 
 function waitMinutesForGroup(groupNo, zeroGroupRemaining) {
@@ -821,7 +821,6 @@ function renderDashboard() {
 }
 
 function renderQueuePanel(idleCredentials, courtPreview) {
-  const remainingValue = hasManualRemainingMinutes() ? state.form.courtRemainingMinutes : courtPreview.remainingMinutes;
   return `
     <div class="section">
       <h3 class="section-title">排队</h3>
@@ -833,7 +832,7 @@ function renderQueuePanel(idleCredentials, courtPreview) {
         </div>
         <div class="field small">
           <label for="remaining">场上第0组剩余时间</label>
-          <input id="remaining" class="input" type="number" min="0" max="45" value="${html(remainingValue)}" data-field="courtRemainingMinutes" />
+          <input id="remaining" class="input" type="number" min="0" max="45" value="${html(state.form.courtRemainingMinutes)}" data-field="courtRemainingMinutes" />
         </div>
         ${renderQueueInfo(courtPreview)}
       </div>
