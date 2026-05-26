@@ -32,7 +32,7 @@ const state = {
     password: '',
     courtName: '',
     courtRemainingMinutes: '',
-    courtAheadGroups: '',
+    courtQueueGroupNo: '1',
     targetQueueEntryId: ''
   },
   history: [],
@@ -104,10 +104,10 @@ function parseRemainingMinutes(value) {
   return Math.max(0, Math.min(45, Math.floor(minutes)));
 }
 
-function parseAheadGroups(value) {
-  const groups = Number(value);
-  if (!Number.isFinite(groups)) return 0;
-  return Math.max(0, Math.min(20, Math.floor(groups)));
+function parseQueueGroupNo(value) {
+  const groupNo = Number(value);
+  if (!Number.isFinite(groupNo)) return 1;
+  return Math.max(0, Math.min(4, Math.floor(groupNo)));
 }
 
 function participantCount(entry) {
@@ -429,6 +429,13 @@ async function addQueueEntry() {
     showToast('请输入场地编号');
     return;
   }
+  const selectedQueueEntry = findQueueEntryByGroupNo(parseQueueGroupNo(state.form.courtQueueGroupNo));
+  const selectedQueueCount = selectedQueueEntry ? participantCount(selectedQueueEntry) : 0;
+  if (selectedQueueCount >= 4) {
+    showToast(`第${state.form.courtQueueGroupNo}组已经排满`);
+    return;
+  }
+  state.form.targetQueueEntryId = selectedQueueCount === 2 ? selectedQueueEntry._id : '';
   if (state.form.targetQueueEntryId && selectedIds.length !== 2) {
     showToast('补全半场请选择 2 个账号');
     return;
@@ -441,17 +448,18 @@ async function addQueueEntry() {
   state.savingQueue = true;
   render();
   try {
+    const courtPreview = buildCourtPreview();
     await callApi('addQueueEntry', {
       groupId: state.currentGroup._id,
       courtName,
-      courtRemainingMinutes: parseRemainingMinutes(state.form.courtRemainingMinutes),
-      courtAheadGroups: parseAheadGroups(state.form.courtAheadGroups),
+      courtRemainingMinutes: courtPreview.remainingMinutes,
+      courtQueueGroupNo: parseQueueGroupNo(state.form.courtQueueGroupNo),
       targetQueueEntryId: state.form.targetQueueEntryId,
       credentialIds: selectedIds
     });
     state.selectedIds.clear();
     state.form.courtRemainingMinutes = '';
-    state.form.courtAheadGroups = '';
+    state.form.courtQueueGroupNo = '1';
     state.form.targetQueueEntryId = '';
     state.queueOpen = false;
     await refreshDashboard(false);
@@ -594,59 +602,72 @@ function buildCourtStats() {
   return { playingItems, queuedItems };
 }
 
-function buildHalfGroupOptions() {
+function findQueueEntryByGroupNo(groupNo) {
   const courtName = state.form.courtName.trim();
-  if (!courtName) return [];
-  return state.queueEntries
-    .filter((entry) => entry.courtName === courtName && ['playing', 'queued'].includes(entry.status) && participantCount(entry) === 2 && Number(entry.groupNo) >= 0)
-    .sort((a, b) => Number(a.groupNo) - Number(b.groupNo))
-    .map((entry) => ({
-      id: entry._id,
-      label: entry.isExternal && !(entry.credentialIds || []).length ? `加入第 ${entry.groupNo} 组半场` : `补全第 ${entry.groupNo} 组半场`,
-      statusText: entry.status === 'playing' ? '正在打' : '排队中'
-    }));
+  if (!courtName) return null;
+  return state.queueEntries.find((entry) => {
+    return entry.courtName === courtName
+      && ['playing', 'queued'].includes(entry.status)
+      && Number(entry.groupNo) === groupNo;
+  }) || null;
+}
+
+function hasManualRemainingMinutes() {
+  return String(state.form.courtRemainingMinutes || '').trim() !== '';
+}
+
+function getZeroGroupRemaining(entries) {
+  if (hasManualRemainingMinutes()) return parseRemainingMinutes(state.form.courtRemainingMinutes);
+  const playing = entries.find((entry) => entry.status === 'playing');
+  if (playing) return minutesUntil(playing.endAt);
+  return 45;
+}
+
+function waitMinutesForGroup(groupNo, zeroGroupRemaining) {
+  if (groupNo <= 0) return 0;
+  return zeroGroupRemaining + Math.max(0, groupNo - 1) * 45;
 }
 
 function buildCourtPreview() {
   const courtName = state.form.courtName.trim();
-  const manualRemaining = parseRemainingMinutes(state.form.courtRemainingMinutes);
-  const aheadGroups = parseAheadGroups(state.form.courtAheadGroups);
+  const queueGroupNo = parseQueueGroupNo(state.form.courtQueueGroupNo);
   if (!courtName) {
+    const remainingMinutes = getZeroGroupRemaining([]);
     return {
-      nextGroupNo: (manualRemaining > 0 ? 1 : 0) + aheadGroups,
-      remainingMinutes: manualRemaining,
-      waitMinutes: manualRemaining + aheadGroups * 45,
+      nextGroupNo: queueGroupNo,
+      remainingMinutes,
+      waitMinutes: waitMinutesForGroup(queueGroupNo, remainingMinutes),
       hasTrackedCourt: false
     };
   }
 
   const entries = state.queueEntries.filter((entry) => entry.courtName === courtName);
-  const playing = entries.find((entry) => entry.status === 'playing');
-  const queued = entries.filter((entry) => entry.status === 'queued');
+  const remainingMinutes = getZeroGroupRemaining(entries);
   if (!entries.length) {
     return {
-      nextGroupNo: (manualRemaining > 0 ? 1 : 0) + aheadGroups,
-      remainingMinutes: manualRemaining,
-      waitMinutes: manualRemaining + aheadGroups * 45,
+      nextGroupNo: queueGroupNo,
+      remainingMinutes,
+      waitMinutes: waitMinutesForGroup(queueGroupNo, remainingMinutes),
       hasTrackedCourt: false
     };
   }
 
-  const targetEntry = state.form.targetQueueEntryId ? entries.find((entry) => entry._id === state.form.targetQueueEntryId) : null;
+  const targetEntry = state.form.targetQueueEntryId
+    ? entries.find((entry) => entry._id === state.form.targetQueueEntryId)
+    : entries.find((entry) => Number(entry.groupNo) === queueGroupNo && participantCount(entry) > 0);
   if (targetEntry) {
     return {
       nextGroupNo: Number(targetEntry.groupNo || 0),
-      remainingMinutes: targetEntry.status === 'playing' ? minutesUntil(targetEntry.endAt) : 0,
+      remainingMinutes,
       waitMinutes: targetEntry.status === 'queued' ? minutesUntil(targetEntry.startAt) : 0,
       hasTrackedCourt: true
     };
   }
 
-  const waitUntil = queued.length ? queued[queued.length - 1].endAt : playing?.endAt;
   return {
-    nextGroupNo: (playing ? 1 : 0) + queued.length,
-    remainingMinutes: playing ? minutesUntil(playing.endAt) : 0,
-    waitMinutes: waitUntil ? minutesUntil(waitUntil) : 0,
+    nextGroupNo: queueGroupNo,
+    remainingMinutes,
+    waitMinutes: waitMinutesForGroup(queueGroupNo, remainingMinutes),
     hasTrackedCourt: true
   };
 }
@@ -661,13 +682,42 @@ function renderCourtItems(items, emptyText) {
 function renderQueueInfoContent(courtPreview) {
   return `
     <div>第 ${courtPreview.nextGroupNo} 组</div>
-    ${!courtPreview.hasTrackedCourt ? `<div>当前剩余 ${courtPreview.remainingMinutes} 分钟</div>` : ''}
+    <div>场上第0组剩余 ${courtPreview.remainingMinutes} 分钟</div>
     <div>预计等待 ${courtPreview.waitMinutes} 分钟</div>
   `;
 }
 
 function renderQueueInfo(courtPreview) {
   return `<div class="queue-info" data-queue-info>${renderQueueInfoContent(courtPreview)}</div>`;
+}
+
+function renderQueueGroupOptions() {
+  const selectedGroupNo = parseQueueGroupNo(state.form.courtQueueGroupNo);
+  const options = [0, 1, 2, 3, 4];
+  return `
+    <div class="queue-position-panel">
+      <strong>加入场地排队：</strong>
+      <div class="queue-position-options">
+        ${options.map((groupNo) => {
+          const entry = findQueueEntryByGroupNo(groupNo);
+          const count = entry ? participantCount(entry) : 0;
+          const disabled = count >= 4;
+          const baseLabel = groupNo === 0 ? '第0组（正在打）' : `第${groupNo}组`;
+          const label = count > 0 && groupNo === 0
+            ? `第0组（正在打，已排${count}）`
+            : count > 0
+              ? `${baseLabel}（已排${count}）`
+              : baseLabel;
+          return `
+            <label class="radio-row ${disabled ? 'is-disabled' : ''}">
+              <input type="radio" name="queue-group" value="${groupNo}" data-target-id="${html(entry?._id || '')}" ${selectedGroupNo === groupNo && !disabled ? 'checked' : ''} ${disabled ? 'disabled' : ''} data-queue-group />
+              ${html(label)}
+            </label>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function updateQueueInfo() {
@@ -721,7 +771,6 @@ function renderDashboard() {
   };
   const courtStats = buildCourtStats();
   const courtPreview = buildCourtPreview();
-  const halfGroupOptions = buildHalfGroupOptions();
 
   return `
     <section class="section">
@@ -750,7 +799,7 @@ function renderDashboard() {
           ${renderCourtItems(courtStats.queuedItems, '场地号：无')}
         </div>
         <button class="btn primary queue-toggle" data-action="toggle-queue">${state.queueOpen ? '收起排队' : '添加排队'}</button>
-        ${state.queueOpen ? renderQueuePanel(idleCredentials, courtPreview, halfGroupOptions) : ''}
+        ${state.queueOpen ? renderQueuePanel(idleCredentials, courtPreview) : ''}
       </section>
 
       <section>
@@ -771,7 +820,8 @@ function renderDashboard() {
   `;
 }
 
-function renderQueuePanel(idleCredentials, courtPreview, halfGroupOptions) {
+function renderQueuePanel(idleCredentials, courtPreview) {
+  const remainingValue = hasManualRemainingMinutes() ? state.form.courtRemainingMinutes : courtPreview.remainingMinutes;
   return `
     <div class="section">
       <h3 class="section-title">排队</h3>
@@ -781,27 +831,13 @@ function renderQueuePanel(idleCredentials, courtPreview, halfGroupOptions) {
           <label for="court-name">场地号</label>
           <input id="court-name" class="input" value="${html(state.form.courtName)}" placeholder="场地编号" data-field="courtName" />
         </div>
-        ${!courtPreview.hasTrackedCourt ? `
-          <div class="field small">
-            <label for="remaining">当前剩余分钟</label>
-            <input id="remaining" class="input" type="number" min="0" max="45" value="${html(state.form.courtRemainingMinutes)}" data-field="courtRemainingMinutes" />
-          </div>
-          <div class="field small">
-            <label for="ahead">前方排队组数</label>
-            <input id="ahead" class="input" type="number" min="0" max="20" value="${html(state.form.courtAheadGroups)}" data-field="courtAheadGroups" />
-          </div>
-        ` : ''}
+        <div class="field small">
+          <label for="remaining">场上第0组剩余时间</label>
+          <input id="remaining" class="input" type="number" min="0" max="45" value="${html(remainingValue)}" data-field="courtRemainingMinutes" />
+        </div>
         ${renderQueueInfo(courtPreview)}
       </div>
-      ${halfGroupOptions.length ? `
-        <div class="half-panel">
-          <strong>补全半场</strong>
-          <label class="radio-row"><input type="radio" name="half" value="" ${!state.form.targetQueueEntryId ? 'checked' : ''} data-half /> 新排一组</label>
-          ${halfGroupOptions.map((item) => `
-            <label class="radio-row"><input type="radio" name="half" value="${html(item.id)}" ${state.form.targetQueueEntryId === item.id ? 'checked' : ''} data-half /> ${html(item.label)} · ${html(item.statusText)}</label>
-          `).join('')}
-        </div>
-      ` : ''}
+      ${renderQueueGroupOptions()}
       <div class="check-list">
         ${idleCredentials.length ? idleCredentials.map((item) => `
           <label class="check-row">
@@ -1063,7 +1099,7 @@ function bindEvents() {
       const field = event.currentTarget.dataset.field;
       state.form[field] = event.currentTarget.value;
       if (field === 'courtName') state.form.targetQueueEntryId = '';
-      if (['courtName', 'courtRemainingMinutes', 'courtAheadGroups'].includes(field)) updateQueueInfo();
+      if (['courtName', 'courtRemainingMinutes'].includes(field)) updateQueueInfo();
     });
     if (input.dataset.field === 'courtName') {
       input.addEventListener('change', render);
@@ -1079,9 +1115,10 @@ function bindEvents() {
     });
   });
 
-  app.querySelectorAll('[data-half]').forEach((input) => {
+  app.querySelectorAll('[data-queue-group]').forEach((input) => {
     input.addEventListener('change', (event) => {
-      state.form.targetQueueEntryId = event.currentTarget.value;
+      state.form.courtQueueGroupNo = event.currentTarget.value;
+      state.form.targetQueueEntryId = event.currentTarget.dataset.targetId || '';
       render();
     });
   });

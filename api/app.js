@@ -95,6 +95,12 @@ function parseAheadGroups(value) {
   return Math.max(0, Math.min(20, Math.floor(groups)));
 }
 
+function parseQueueGroupNo(value) {
+  const groupNo = Number(value);
+  if (!Number.isFinite(groupNo)) return 1;
+  return Math.max(0, Math.min(4, Math.floor(groupNo)));
+}
+
 function externalCredentialCount(entry) {
   const count = Number(entry.externalCredentialCount || 0);
   if (entry.isExternal && !(entry.credentialIds || []).length && !count) return 2;
@@ -695,6 +701,37 @@ function addExternalEntry(state, context, groupId, courtName, status, groupNo, s
   return entry;
 }
 
+function scheduleCourtEntries(state, orderedEntries, zeroGroupRemainingMinutes, scheduledAt = new Date()) {
+  let cursor = new Date(scheduledAt);
+
+  orderedEntries.forEach((entry, index) => {
+    const startAt = cursor.toISOString();
+    const endAt = addMinutes(startAt, index === 0 ? zeroGroupRemainingMinutes : ROUND_MINUTES);
+    const status = index === 0 ? 'playing' : 'queued';
+    Object.assign(entry, {
+      status,
+      groupNo: index,
+      startAt,
+      endAt,
+      updatedAt: scheduledAt.toISOString()
+    });
+
+    (entry.credentialIds || []).forEach((id) => {
+      const credential = getDoc(state, 'credentials', id);
+      if (!credential) return;
+      Object.assign(credential, {
+        status,
+        currentCourtName: entry.courtName,
+        currentQueueEntryId: entry._id,
+        availableAt: endAt,
+        updatedAt: scheduledAt.toISOString()
+      });
+    });
+
+    cursor = new Date(endAt);
+  });
+}
+
 function recordPlayHistory(state, context, groupId, queueEntryId, credentials) {
   if (!context.user) return;
   const owned = credentials.filter((credential) => credential.createdByUserId === context.user._id);
@@ -722,8 +759,10 @@ function addQueueEntry(state, context, payload) {
 
   const courtName = String(payload.courtName || '').trim();
   const courtRemainingMinutes = parseRemainingMinutes(payload.courtRemainingMinutes);
-  const courtAheadGroups = parseAheadGroups(payload.courtAheadGroups);
-  const targetQueueEntryId = String(payload.targetQueueEntryId || '').trim();
+  const hasQueueGroupNo = payload.courtQueueGroupNo !== undefined && payload.courtQueueGroupNo !== null && payload.courtQueueGroupNo !== '';
+  const legacyQueueGroupNo = (courtRemainingMinutes > 0 ? 1 : 0) + parseAheadGroups(payload.courtAheadGroups);
+  const courtQueueGroupNo = hasQueueGroupNo ? parseQueueGroupNo(payload.courtQueueGroupNo) : parseQueueGroupNo(legacyQueueGroupNo);
+  let targetQueueEntryId = String(payload.targetQueueEntryId || '').trim();
   const credentialIds = Array.isArray(payload.credentialIds) ? payload.credentialIds : [];
 
   if (!courtName) throw new Error('请输入场地编号');
@@ -737,6 +776,20 @@ function addQueueEntry(state, context, payload) {
   if (credentials.some((item) => !item || item.groupId !== groupId || item.deletedAt)) throw new Error('账号数据不完整');
   const blocked = credentials.find((item) => item.status !== 'idle');
   if (blocked) throw new Error(`${blocked.username} 不是空闲状态`);
+
+  if (!targetQueueEntryId) {
+    const selectedEntry = state.queueEntries.find((entry) => {
+      return entry.groupId === groupId
+        && entry.courtName === courtName
+        && ['playing', 'queued'].includes(entry.status)
+        && Number(entry.groupNo) === courtQueueGroupNo;
+    });
+    if (selectedEntry) {
+      const selectedCount = participantCount(selectedEntry);
+      if (selectedCount >= 4) throw new Error(`第 ${courtQueueGroupNo} 组已经排满`);
+      if (selectedCount === 2) targetQueueEntryId = selectedEntry._id;
+    }
+  }
 
   if (targetQueueEntryId) {
     const targetEntry = getDoc(state, 'queueEntries', targetQueueEntryId);
@@ -774,86 +827,40 @@ function addQueueEntry(state, context, payload) {
   const now = new Date();
   const activeEntries = state.queueEntries
     .filter((entry) => entry.groupId === groupId && entry.courtName === courtName && ['playing', 'queued'].includes(entry.status))
-    .sort((a, b) => sortByDateAsc(a, b));
-  const hadTrackedCourt = activeEntries.length > 0;
+    .sort((a, b) => (Number(a.groupNo || 0) - Number(b.groupNo || 0)) || sortByDateAsc(a, b));
   let createdAtCursor = now.getTime();
 
-  if (!hadTrackedCourt && courtRemainingMinutes > 0) {
-    const externalEndAt = new Date(now.getTime() + courtRemainingMinutes * 60000);
-    const external = {
-      _id: uid('queue'),
-      groupId,
-      courtName,
-      credentialIds: [],
-      credentialBatches: [],
-      status: 'playing',
-      groupNo: 0,
-      isExternal: true,
-      externalCredentialCount: 2,
-      createdByMemberId: actorId(context),
-      createdByUserId: context.user ? context.user._id : '',
-      startAt: now.toISOString(),
-      endAt: externalEndAt.toISOString(),
-      createdAt: new Date(createdAtCursor).toISOString(),
-      updatedAt: now.toISOString()
-    };
-    state.queueEntries.push(external);
+  while (activeEntries.length < courtQueueGroupNo) {
+    const external = addExternalEntry(state, context, groupId, courtName, 'queued', activeEntries.length, now, createdAtCursor);
     activeEntries.push(external);
     createdAtCursor += 1;
   }
 
-  if (!hadTrackedCourt && courtAheadGroups > 0) {
-    let cursor = activeEntries.reduce((latest, entry) => {
-      const endAt = toDate(entry.endAt) || now;
-      return endAt.getTime() > latest.getTime() ? endAt : latest;
-    }, now);
-
-    for (let index = 0; index < courtAheadGroups; index += 1) {
-      const external = addExternalEntry(state, context, groupId, courtName, 'queued', activeEntries.length, cursor, createdAtCursor);
-      activeEntries.push(external);
-      cursor = new Date(external.endAt);
-      createdAtCursor += 1;
-    }
-  }
-
-  const hasPlaying = activeEntries.some((entry) => entry.status === 'playing');
-  const status = hasPlaying || activeEntries.length ? 'queued' : 'playing';
-  const latestEnd = activeEntries.reduce((latest, entry) => {
-    const endAt = toDate(entry.endAt) || now;
-    return endAt.getTime() > latest.getTime() ? endAt : latest;
-  }, now);
-  const startAt = status === 'playing' ? now.toISOString() : latestEnd.toISOString();
-  const endAt = addMinutes(startAt, ROUND_MINUTES);
   const entry = {
     _id: uid('queue'),
     groupId,
     courtName,
     credentialIds,
     credentialBatches: credentialIds.length ? [credentialIds] : [],
-    status,
-    groupNo: status === 'playing' ? 0 : activeEntries.length,
+    status: 'queued',
+    groupNo: courtQueueGroupNo,
     createdByMemberId: actorId(context),
     createdByUserId: context.user ? context.user._id : '',
-    startAt,
-    endAt,
+    startAt: now.toISOString(),
+    endAt: addMinutes(now, ROUND_MINUTES),
     createdAt: new Date(createdAtCursor).toISOString(),
     updatedAt: now.toISOString()
   };
   state.queueEntries.push(entry);
 
-  credentials.forEach((credential) => {
-    Object.assign(credential, {
-      status,
-      currentCourtName: courtName,
-      currentQueueEntryId: entry._id,
-      availableAt: endAt,
-      updatedAt: now.toISOString()
-    });
+  const insertIndex = Math.min(courtQueueGroupNo, activeEntries.length);
+  activeEntries.splice(insertIndex, 0, entry);
+  activeEntries.forEach((activeEntry, index) => {
+    activeEntry.createdAt = new Date(now.getTime() + index).toISOString();
   });
-
-  rescheduleCourt(state, groupId, courtName);
+  scheduleCourtEntries(state, activeEntries, courtRemainingMinutes, now);
   recordPlayHistory(state, context, groupId, entry._id, credentials);
-  logOperation(state, context, groupId, 'addQueueEntry', { queueEntryId: entry._id, courtName, credentialIds });
+  logOperation(state, context, groupId, 'addQueueEntry', { queueEntryId: entry._id, courtName, credentialIds, courtQueueGroupNo });
   return { queueEntryId: entry._id };
 }
 
