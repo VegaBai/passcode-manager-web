@@ -24,6 +24,8 @@ const state = {
   queueOpen: false,
   form: {
     groupName: 'Fremont Bintang',
+    groupSettingsName: '',
+    groupAdminEmail: '',
     displayName: '',
     adminEmail: '',
     editUsername: '',
@@ -139,7 +141,9 @@ function normalizeGroups(groups) {
   return (groups || []).map((group) => ({
     ...group,
     displayName: group.name || '羽毛球群',
-    shortId: group._id ? group._id.slice(-8) : ''
+    shortId: group._id ? group._id.slice(-8) : '',
+    adminEmails: Array.isArray(group.adminEmails) ? group.adminEmails : [],
+    canManageGroup: Boolean(group.canManageGroup)
   }));
 }
 
@@ -214,6 +218,12 @@ async function refreshDashboard(withToast = true) {
 }
 
 async function createGroup() {
+  if (!state.user) {
+    showToast('请先登录后创建球群');
+    state.modal = 'settings';
+    render();
+    return;
+  }
   const name = state.form.groupName.trim();
   if (!name) {
     showToast('请输入球群名称');
@@ -409,6 +419,59 @@ async function removeAdminEmail(email) {
   render();
 }
 
+function syncGroupResult(result) {
+  state.groups = normalizeGroups(result.groups || state.groups);
+  state.currentGroup = result.currentGroup ? normalizeGroups([result.currentGroup])[0] : state.currentGroup;
+  if (state.currentGroup) pickCurrentGroup(state.currentGroup._id);
+}
+
+async function saveGroupSettings() {
+  if (!state.currentGroup) return;
+  const name = state.form.groupSettingsName.trim();
+  if (!name) {
+    showToast('请输入球群名称');
+    return;
+  }
+  try {
+    const result = await callApi('updateGroupSettings', { groupId: state.currentGroup._id, name });
+    syncGroupResult(result);
+    showToast('球群设置已保存');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
+async function addGroupAdmin() {
+  if (!state.currentGroup) return;
+  const email = state.form.groupAdminEmail.trim();
+  if (!email) {
+    showToast('请输入管理员邮箱');
+    return;
+  }
+  try {
+    const result = await callApi('addGroupAdmin', { groupId: state.currentGroup._id, email });
+    syncGroupResult(result);
+    state.form.groupAdminEmail = '';
+    showToast('球群管理员已添加');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
+async function removeGroupAdmin(email) {
+  if (!state.currentGroup) return;
+  try {
+    const result = await callApi('removeGroupAdmin', { groupId: state.currentGroup._id, email });
+    syncGroupResult(result);
+    showToast('球群管理员已删除');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
 async function loadMyHistory() {
   if (!state.user) return;
   try {
@@ -525,7 +588,8 @@ function buildCredentials() {
   const entriesById = Object.fromEntries(state.queueEntries.map((entry) => [entry._id, entry]));
   const statusText = { idle: '空闲', playing: '正在打', queued: '排队中' };
   const statusRank = { idle: 0, playing: 1, queued: 2 };
-  const canAdminDelete = Boolean(state.user?.isAdmin);
+  const canEditAny = Boolean(state.user?.isAdmin);
+  const canDeleteAny = Boolean(state.user?.isAdmin || state.currentGroup?.canManageGroup);
 
   const mapped = state.credentials.map((item) => {
     const entry = item.currentQueueEntryId ? entriesById[item.currentQueueEntryId] : null;
@@ -543,8 +607,8 @@ function buildCredentials() {
       ownerText: item.ownerDisplayName || item.createdByDisplayName || (item.createdByMemberId === state.memberId ? '未登录用户' : '群成员添加'),
       createdAtText: formatPTDateTime(item.createdAt),
       createdAtTs: toDate(item.createdAt)?.getTime() || 0,
-      canManage: Boolean(isOwner && item.status === 'idle'),
-      canDelete: Boolean((isOwner || canAdminDelete) && item.status === 'idle'),
+      canManage: Boolean((isOwner || canEditAny) && item.status === 'idle'),
+      canDelete: Boolean((isOwner || canDeleteAny) && item.status === 'idle'),
       canCancelQueue: Boolean(item.status === 'playing' || item.status === 'queued')
     };
   });
@@ -778,6 +842,7 @@ function renderDashboard() {
         <div class="group-label">球群</div>
         <div class="group-name">${html(state.currentGroup.displayName)}</div>
         <div class="invite-code">邀请码 ${html(state.currentGroup.shortId || state.currentGroup._id)}</div>
+        ${state.currentGroup.canManageGroup ? '<button class="btn icon" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
       </div>
     </section>
 
@@ -916,6 +981,45 @@ function renderGroupModal() {
           ${state.groups.map((group) => `
             <button class="btn" data-action="switch-group" data-id="${html(group._id)}" style="width:100%;margin-top:8px">${html(group.displayName)}</button>
           `).join('') || '<div class="empty">还没有加入任何球群</div>'}
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-action="close-modal">关闭</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderGroupSettingsModal() {
+  if (state.modal !== 'group-settings' || !state.currentGroup) return '';
+  const adminEmails = state.currentGroup.adminEmails || [];
+  const nameValue = state.form.groupSettingsName || state.currentGroup.name || state.currentGroup.displayName;
+  return `
+    <div class="overlay">
+      <div class="modal settings-modal">
+        <h2>球群设置</h2>
+        <div class="inline-form">
+          <div class="field">
+            <label for="group-settings-name">球群名称</label>
+            <input id="group-settings-name" class="input" maxlength="60" value="${html(nameValue)}" data-field="groupSettingsName" />
+          </div>
+          <button class="btn primary" data-action="save-group-settings">保存</button>
+        </div>
+        <h3 class="settings-subtitle">球群管理员</h3>
+        <div class="inline-form">
+          <div class="field">
+            <label for="group-admin-email">管理员邮箱</label>
+            <input id="group-admin-email" class="input" type="email" value="${html(state.form.groupAdminEmail)}" data-field="groupAdminEmail" />
+          </div>
+          <button class="btn primary" data-action="add-group-admin">添加</button>
+        </div>
+        <div class="admin-list">
+          ${adminEmails.length ? adminEmails.map((email) => `
+            <div class="admin-row">
+              <span>${html(email)}</span>
+              <button class="btn danger" data-action="remove-group-admin" data-email="${html(email)}">删除</button>
+            </div>
+          `).join('') : '<div class="empty">暂无球群管理员</div>'}
         </div>
         <div class="modal-actions">
           <button class="btn" data-action="close-modal">关闭</button>
@@ -1084,6 +1188,7 @@ function render() {
     ${renderJoinBanner()}
     ${renderDashboard()}
     ${renderGroupModal()}
+    ${renderGroupSettingsModal()}
     ${renderCancelModal()}
     ${renderSettingsModal()}
     ${renderEditModal()}
@@ -1156,6 +1261,16 @@ function bindEvents() {
         await refreshDashboard(false);
       }
       if (action === 'share') shareGroup();
+      if (action === 'open-group-settings') {
+        if (!state.currentGroup?.canManageGroup) {
+          showToast('没有权限管理这个球群');
+          return;
+        }
+        state.form.groupSettingsName = state.currentGroup.name || state.currentGroup.displayName || '';
+        state.form.groupAdminEmail = '';
+        state.modal = 'group-settings';
+        render();
+      }
       if (action === 'toggle-queue') {
         state.queueOpen = !state.queueOpen;
         render();
@@ -1183,6 +1298,9 @@ function bindEvents() {
       if (action === 'save-profile') await saveProfile();
       if (action === 'add-admin') await addAdminEmail();
       if (action === 'remove-admin') await removeAdminEmail(event.currentTarget.dataset.email);
+      if (action === 'save-group-settings') await saveGroupSettings();
+      if (action === 'add-group-admin') await addGroupAdmin();
+      if (action === 'remove-group-admin') await removeGroupAdmin(event.currentTarget.dataset.email);
       if (action === 'logout') await logout();
     });
   });

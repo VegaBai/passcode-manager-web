@@ -124,6 +124,10 @@ button {
   gap: 8px;
 }
 
+.group-row .btn.icon {
+  flex: none;
+}
+
 .group-label {
   flex: none;
   font-size: 14px;
@@ -725,6 +729,12 @@ button {
   border-bottom: 1px solid var(--line-soft);
   color: var(--text);
   font-size: 14px;
+}
+
+.admin-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hidden {

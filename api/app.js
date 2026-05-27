@@ -116,12 +116,13 @@ function sortByDateAsc(a, b, field = 'createdAt') {
 }
 
 function normalizeState(state) {
+  const users = Array.isArray(state.users) ? state.users : [];
   return {
-    groups: Array.isArray(state.groups) ? state.groups : [],
+    groups: normalizeGroupsForState(state.groups, users),
     credentials: Array.isArray(state.credentials) ? state.credentials : [],
     queueEntries: Array.isArray(state.queueEntries) ? state.queueEntries : [],
     operationLogs: Array.isArray(state.operationLogs) ? state.operationLogs : [],
-    users: Array.isArray(state.users) ? state.users : [],
+    users,
     sessions: Array.isArray(state.sessions) ? state.sessions : [],
     playHistory: Array.isArray(state.playHistory) ? state.playHistory : [],
     adminEmails: normalizeAdminEmails(state.adminEmails)
@@ -205,12 +206,37 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-function normalizeAdminEmails(emails) {
+function normalizeEmailList(emails) {
   return Array.from(new Set((Array.isArray(emails) ? emails : [])
     .map(normalizeEmail)
-    .filter(Boolean)
-    .filter((email) => !SUPER_ADMIN_EMAILS.has(email))))
+    .filter(Boolean)))
     .sort();
+}
+
+function normalizeAdminEmails(emails) {
+  return normalizeEmailList(emails).filter((email) => !SUPER_ADMIN_EMAILS.has(email));
+}
+
+function normalizeGroupsForState(groups, users) {
+  const usersById = new Map((users || []).map((user) => [user._id, user]));
+  return (Array.isArray(groups) ? groups : []).map((group) => {
+    const ownerUser = group.ownerUserId ? usersById.get(group.ownerUserId) : null;
+    const hasAdminFields = Array.isArray(group.adminEmails) || Array.isArray(group.adminUserIds);
+    const adminEmails = normalizeEmailList([
+      ...(Array.isArray(group.adminEmails) ? group.adminEmails : []),
+      ...(!hasAdminFields ? [group.ownerEmail, ownerUser?.email] : [])
+    ]).filter((email) => !SUPER_ADMIN_EMAILS.has(email));
+    const adminUserIds = Array.from(new Set([
+      ...(Array.isArray(group.adminUserIds) ? group.adminUserIds : []),
+      ...(!hasAdminFields ? [group.ownerUserId] : [])
+    ].filter(Boolean))).sort();
+
+    return {
+      ...group,
+      adminEmails,
+      adminUserIds
+    };
+  });
 }
 
 function isSuperAdmin(user) {
@@ -223,6 +249,34 @@ function isRegularAdmin(state, user) {
 
 function isAccountAdmin(state, user) {
   return isSuperAdmin(user) || isRegularAdmin(state, user);
+}
+
+function groupAdminEmails(group) {
+  return normalizeEmailList(group?.adminEmails || []).filter((email) => !SUPER_ADMIN_EMAILS.has(email));
+}
+
+function isGroupAdmin(state, user, group) {
+  if (!user || !group) return false;
+  const email = normalizeEmail(user.email);
+  const hasAdminFields = (group.adminUserIds || []).length || groupAdminEmails(group).length;
+  return (group.adminUserIds || []).includes(user._id)
+    || groupAdminEmails(group).includes(email)
+    || (!hasAdminFields && group.ownerUserId && group.ownerUserId === user._id);
+}
+
+function canManageGroup(state, user, group) {
+  return isAccountAdmin(state, user) || isGroupAdmin(state, user, group);
+}
+
+function publicGroup(state, context, group) {
+  const canManage = canManageGroup(state, context.user, group);
+  const { adminUserIds, ownerEmail, ...publicFields } = group;
+  return {
+    ...publicFields,
+    adminEmails: canManage ? groupAdminEmails(group) : [],
+    canManageGroup: canManage,
+    isGroupAdmin: isGroupAdmin(state, context.user, group)
+  };
 }
 
 function publicUser(user, state) {
@@ -257,8 +311,14 @@ function touchUserGroup(user, groupId) {
 function listGroups(state, context) {
   const id = actorId(context);
   return state.groups
-    .filter((group) => (group.memberIds || []).includes(id) || (context.user && (context.user.groupIds || []).includes(group._id)))
-    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    .filter((group) => {
+      if (context.user && isAccountAdmin(state, context.user)) return true;
+      return (group.memberIds || []).includes(id)
+        || (context.user && (context.user.groupIds || []).includes(group._id))
+        || isGroupAdmin(state, context.user, group);
+    })
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    .map((group) => publicGroup(state, context, group));
 }
 
 function getDoc(state, collectionName, id) {
@@ -534,6 +594,70 @@ function removeAdminEmail(state, context, payload) {
   return { user: publicUser(context.user, state) };
 }
 
+function requireGroupManager(state, context, group) {
+  requireLoggedIn(context);
+  if (!canManageGroup(state, context.user, group)) throw new Error('没有权限管理这个球群');
+}
+
+function updateGroupSettings(state, context, payload) {
+  const group = enterGroup(state, payload.groupId, context);
+  requireGroupManager(state, context, group);
+  const name = String(payload.name || '').trim();
+  if (!name) throw new Error('请输入球群名称');
+  if (name.length > 60) throw new Error('球群名称不能超过 60 个字符');
+
+  group.name = name;
+  group.updatedAt = nowIso();
+  logOperation(state, context, group._id, 'updateGroupSettings', { name });
+  return {
+    currentGroup: publicGroup(state, context, group),
+    groups: listGroups(state, context)
+  };
+}
+
+function addGroupAdmin(state, context, payload) {
+  const group = enterGroup(state, payload.groupId, context);
+  requireGroupManager(state, context, group);
+  const email = normalizeEmail(payload.email);
+  if (!email || !email.includes('@')) throw new Error('请输入有效邮箱');
+  if (SUPER_ADMIN_EMAILS.has(email)) throw new Error('总管理员不需要重复添加为球群管理员');
+
+  group.adminEmails = normalizeEmailList([...(group.adminEmails || []), email]);
+  const user = state.users.find((item) => normalizeEmail(item.email) === email);
+  if (user) {
+    group.adminUserIds = Array.from(new Set([...(group.adminUserIds || []), user._id])).sort();
+    touchUserGroup(user, group._id);
+  }
+  group.updatedAt = nowIso();
+  logOperation(state, context, group._id, 'addGroupAdmin', { email });
+  return {
+    currentGroup: publicGroup(state, context, group),
+    groups: listGroups(state, context)
+  };
+}
+
+function removeGroupAdmin(state, context, payload) {
+  const group = enterGroup(state, payload.groupId, context);
+  requireGroupManager(state, context, group);
+  const email = normalizeEmail(payload.email);
+  if (!email) throw new Error('缺少球群管理员邮箱');
+
+  const nextEmails = groupAdminEmails(group).filter((item) => item !== email);
+  if (!isAccountAdmin(state, context.user) && !nextEmails.length) throw new Error('至少保留一个球群管理员');
+
+  group.adminEmails = nextEmails;
+  const removedUser = state.users.find((item) => normalizeEmail(item.email) === email);
+  if (removedUser) {
+    group.adminUserIds = (group.adminUserIds || []).filter((id) => id !== removedUser._id);
+  }
+  group.updatedAt = nowIso();
+  logOperation(state, context, group._id, 'removeGroupAdmin', { email });
+  return {
+    currentGroup: publicGroup(state, context, group),
+    groups: listGroups(state, context)
+  };
+}
+
 function myHistory(state, context) {
   requireLoggedIn(context);
   return {
@@ -554,15 +678,20 @@ function init(state, context) {
 }
 
 function createGroup(state, context, payload) {
+  requireLoggedIn(context);
   const name = String(payload.name || '').trim();
   if (!name) throw new Error('请输入球群名称');
   const id = actorId(context);
+  const email = normalizeEmail(context.user.email);
 
   const group = {
     _id: uid('grp'),
     name,
     ownerMemberId: id,
-    ownerUserId: context.user ? context.user._id : '',
+    ownerUserId: context.user._id,
+    ownerEmail: email,
+    adminUserIds: [context.user._id],
+    adminEmails: SUPER_ADMIN_EMAILS.has(email) ? [] : [email],
     memberIds: [id],
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -584,7 +713,7 @@ function getDashboard(state, context, payload) {
   const group = enterGroup(state, payload.groupId, context);
   advanceExpired(state);
   return {
-    currentGroup: group,
+    currentGroup: publicGroup(state, context, group),
     user: publicUser(context.user, state),
     groups: listGroups(state, context),
     credentials: state.credentials
@@ -645,10 +774,10 @@ function addCredential(state, context, payload) {
 function updateCredential(state, context, payload) {
   requireLoggedIn(context);
   const groupId = payload.groupId;
-  enterGroup(state, groupId, context);
+  const group = enterGroup(state, groupId, context);
   const credential = getDoc(state, 'credentials', payload.credentialId);
   if (!credential || credential.groupId !== groupId || credential.deletedAt) throw new Error('账号不存在');
-  if (credential.createdByUserId !== context.user._id) throw new Error('只能修改自己登录后添加的账号');
+  if (credential.createdByUserId !== context.user._id && !isAccountAdmin(state, context.user)) throw new Error('只能修改自己登录后添加的账号');
   if (credential.status !== 'idle') throw new Error('排队或正在打的账号不能修改');
 
   const username = String(payload.username || '').trim();
@@ -660,17 +789,17 @@ function updateCredential(state, context, payload) {
   credential.username = username;
   credential.password = password;
   credential.updatedAt = nowIso();
-  logOperation(state, context, groupId, 'updateCredential', { credentialId: credential._id, username });
+  logOperation(state, context, group._id, 'updateCredential', { credentialId: credential._id, username });
   return {};
 }
 
 function deleteCredential(state, context, payload) {
   requireLoggedIn(context);
   const groupId = payload.groupId;
-  enterGroup(state, groupId, context);
+  const group = enterGroup(state, groupId, context);
   const credential = getDoc(state, 'credentials', payload.credentialId);
   if (!credential || credential.groupId !== groupId || credential.deletedAt) throw new Error('账号不存在');
-  if (credential.createdByUserId !== context.user._id && !isAccountAdmin(state, context.user)) throw new Error('只能删除自己登录后添加的账号');
+  if (credential.createdByUserId !== context.user._id && !canManageGroup(state, context.user, group)) throw new Error('只能删除自己登录后添加的账号');
   if (credential.status !== 'idle') throw new Error('排队或正在打的账号不能删除');
 
   credential.deletedAt = nowIso();
@@ -976,6 +1105,9 @@ module.exports = async function handler(req, res) {
       updateProfile,
       addAdminEmail,
       removeAdminEmail,
+      updateGroupSettings,
+      addGroupAdmin,
+      removeGroupAdmin,
       myHistory,
       init,
       createGroup,
