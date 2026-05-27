@@ -714,6 +714,40 @@ button {
   gap: 8px;
 }
 
+.settings-group-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.settings-group-main {
+  display: grid;
+  height: auto;
+  min-height: 44px;
+  justify-items: start;
+  text-align: left;
+  padding: 7px 12px;
+}
+
+.settings-group-main span,
+.settings-group-main small {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-group-main span {
+  font-weight: 700;
+}
+
+.settings-group-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .admin-list {
   display: grid;
   gap: 8px;

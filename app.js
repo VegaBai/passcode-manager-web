@@ -425,6 +425,29 @@ function syncGroupResult(result) {
   if (state.currentGroup) pickCurrentGroup(state.currentGroup._id);
 }
 
+function syncDeletedGroup(result) {
+  const deletedGroupId = result.deletedGroupId || '';
+  state.groups = normalizeGroups(result.groups || state.groups).filter((group) => group._id !== deletedGroupId);
+  state.history = state.history.filter((item) => item.groupId !== deletedGroupId);
+
+  if (state.currentGroup?._id === deletedGroupId) {
+    state.currentGroup = null;
+    state.credentials = [];
+    state.queueEntries = [];
+    state.selectedIds.clear();
+    state.cancelSelectedIds.clear();
+    state.queueOpen = false;
+    localStorage.removeItem('currentGroupId');
+    pickCurrentGroup();
+    return;
+  }
+
+  if (state.currentGroup) {
+    const refreshed = state.groups.find((group) => group._id === state.currentGroup._id);
+    state.currentGroup = refreshed || state.currentGroup;
+  }
+}
+
 async function saveGroupSettings() {
   if (!state.currentGroup) return;
   const name = state.form.groupSettingsName.trim();
@@ -466,6 +489,22 @@ async function removeGroupAdmin(email) {
     const result = await callApi('removeGroupAdmin', { groupId: state.currentGroup._id, email });
     syncGroupResult(result);
     showToast('球群管理员已删除');
+  } catch (error) {
+    showToast(error.message);
+  }
+  render();
+}
+
+async function deleteGroup(groupId, groupName) {
+  if (!state.user?.isSuperAdmin) return;
+  const name = groupName || '这个球群';
+  const confirmed = confirm(`确定删除「${name}」吗？该球群的账号池、排队、打球历史都会一起删除。`);
+  if (!confirmed) return;
+  try {
+    const result = await callApi('deleteGroup', { groupId });
+    syncDeletedGroup(result);
+    if (state.currentGroup) await refreshDashboard(false);
+    showToast('球群已删除');
   } catch (error) {
     showToast(error.message);
   }
@@ -1097,6 +1136,32 @@ function renderAdminPanel() {
   `;
 }
 
+function renderSettingsGroupList() {
+  const title = state.user?.isSuperAdmin ? '所有球群' : (state.user?.isAdmin ? '可管理的球群' : '参与过的球群');
+  return `
+    <h3 class="settings-subtitle">${title}</h3>
+    <div class="settings-groups">
+      ${state.groups.length ? state.groups.map((group) => {
+        const meta = [
+          group.ownerDisplayName ? `创建者 ${group.ownerDisplayName}` : '',
+          `${group.memberCount || 0} 人`,
+          `${group.activeCredentialCount || 0} 个账号`,
+          `${group.activeQueueEntryCount || 0} 条排队`
+        ].filter(Boolean).join(' · ');
+        return `
+          <div class="settings-group-row">
+            <button class="btn settings-group-main" data-action="switch-group" data-id="${html(group._id)}">
+              <span>${html(group.displayName)}</span>
+              <small>${html(meta)}</small>
+            </button>
+            ${state.user?.isSuperAdmin ? `<button class="btn danger" data-action="delete-group" data-id="${html(group._id)}" data-name="${html(group.displayName)}">删除</button>` : ''}
+          </div>
+        `;
+      }).join('') : '<div class="empty">暂无记录</div>'}
+    </div>
+  `;
+}
+
 function renderSettingsModal() {
   if (state.modal !== 'settings') return '';
   if (!state.user) {
@@ -1132,12 +1197,7 @@ function renderSettingsModal() {
           ${heatmap.map((day) => `<span class="heat heat-${day.level}" title="${html(day.key)} · ${day.count} 次"></span>`).join('')}
         </div>
         ${renderAdminPanel()}
-        <h3 class="settings-subtitle">参与过的球群</h3>
-        <div class="settings-groups">
-          ${state.groups.length ? state.groups.map((group) => `
-            <button class="btn" data-action="switch-group" data-id="${html(group._id)}">${html(group.displayName)}</button>
-          `).join('') : '<div class="empty">暂无记录</div>'}
-        </div>
+        ${renderSettingsGroupList()}
         <div class="modal-actions">
           <button class="btn danger" data-action="logout">退出登录</button>
           <button class="btn" data-action="close-modal">关闭</button>
@@ -1301,6 +1361,7 @@ function bindEvents() {
       if (action === 'save-group-settings') await saveGroupSettings();
       if (action === 'add-group-admin') await addGroupAdmin();
       if (action === 'remove-group-admin') await removeGroupAdmin(event.currentTarget.dataset.email);
+      if (action === 'delete-group') await deleteGroup(event.currentTarget.dataset.id, event.currentTarget.dataset.name);
       if (action === 'logout') await logout();
     });
   });

@@ -271,11 +271,16 @@ function canManageGroup(state, user, group) {
 function publicGroup(state, context, group) {
   const canManage = canManageGroup(state, context.user, group);
   const { adminUserIds, ownerEmail, ...publicFields } = group;
+  const owner = group.ownerUserId ? getDoc(state, 'users', group.ownerUserId) : null;
   return {
     ...publicFields,
     adminEmails: canManage ? groupAdminEmails(group) : [],
     canManageGroup: canManage,
-    isGroupAdmin: isGroupAdmin(state, context.user, group)
+    isGroupAdmin: isGroupAdmin(state, context.user, group),
+    ownerDisplayName: owner ? (owner.displayName || owner.name || owner.email) : '',
+    activeCredentialCount: state.credentials.filter((item) => item.groupId === group._id && !item.deletedAt).length,
+    activeQueueEntryCount: state.queueEntries.filter((entry) => entry.groupId === group._id && ['playing', 'queued'].includes(entry.status)).length,
+    memberCount: (group.memberIds || []).length
   };
 }
 
@@ -654,6 +659,41 @@ function removeGroupAdmin(state, context, payload) {
   logOperation(state, context, group._id, 'removeGroupAdmin', { email });
   return {
     currentGroup: publicGroup(state, context, group),
+    groups: listGroups(state, context)
+  };
+}
+
+function deleteGroup(state, context, payload) {
+  requireSuperAdmin(context);
+  const groupId = String(payload.groupId || '').trim();
+  if (!groupId) throw new Error('缺少球群 ID');
+  const group = getDoc(state, 'groups', groupId);
+  if (!group) throw new Error('球群不存在');
+
+  const removedCredentials = state.credentials.filter((item) => item.groupId === groupId).length;
+  const removedQueueEntries = state.queueEntries.filter((entry) => entry.groupId === groupId).length;
+  const removedHistory = state.playHistory.filter((item) => item.groupId === groupId).length;
+  const removedLogs = state.operationLogs.filter((item) => item.groupId === groupId).length;
+
+  state.groups = state.groups.filter((item) => item._id !== groupId);
+  state.credentials = state.credentials.filter((item) => item.groupId !== groupId);
+  state.queueEntries = state.queueEntries.filter((entry) => entry.groupId !== groupId);
+  state.playHistory = state.playHistory.filter((item) => item.groupId !== groupId);
+  state.operationLogs = state.operationLogs.filter((item) => item.groupId !== groupId);
+  state.users.forEach((user) => {
+    user.groupIds = (user.groupIds || []).filter((id) => id !== groupId);
+  });
+
+  logOperation(state, context, groupId, 'deleteGroup', {
+    name: group.name || '',
+    removedCredentials,
+    removedQueueEntries,
+    removedHistory,
+    removedLogs
+  });
+
+  return {
+    deletedGroupId: groupId,
     groups: listGroups(state, context)
   };
 }
@@ -1108,6 +1148,7 @@ module.exports = async function handler(req, res) {
       updateGroupSettings,
       addGroupAdmin,
       removeGroupAdmin,
+      deleteGroup,
       myHistory,
       init,
       createGroup,
