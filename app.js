@@ -1045,6 +1045,7 @@ function renderGroupSettingsModal() {
           <button class="btn primary" data-action="save-group-settings">保存</button>
         </div>
         <h3 class="settings-subtitle">球群管理员</h3>
+        <p class="settings-description">管理员可修改球群名称、添加或移除球群管理员，并删除本球群内空闲账号。</p>
         <div class="inline-form">
           <div class="field">
             <label for="group-admin-email">管理员邮箱</label>
