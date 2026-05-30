@@ -75,6 +75,15 @@ button {
   gap: 8px;
 }
 
+.login-required-note {
+  flex: 0 0 100%;
+  margin-top: -2px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .section,
 .panel,
 .stat-item,
@@ -786,6 +795,10 @@ button {
 
   .toolbar {
     justify-content: flex-start;
+  }
+
+  .login-required-note {
+    text-align: left;
   }
 
   .content-grid {

@@ -1243,6 +1243,7 @@ function render() {
         <button class="btn secondary" data-action="open-groups" ${state.user ? '' : 'disabled'}>切换球群</button>
         <button class="btn primary" data-action="share" ${state.currentGroup ? '' : 'disabled'}>分享链接</button>
         <button class="btn" data-action="open-settings">${state.user ? html(state.user.displayName || state.user.email) : '登录'}</button>
+        ${state.user ? '' : '<div class="login-required-note">登录后可切换球群、添加新球群页面</div>'}
       </div>
     </header>
     ${renderJoinBanner()}
