@@ -32,7 +32,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -456,7 +457,7 @@ button {
 
 .add-account-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(92px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(82px, 0.7fr) minmax(96px, 0.8fr);
   gap: 8px;
   margin-top: 4px;
 }
@@ -645,6 +646,88 @@ button {
   border-bottom: 1px solid var(--line-soft);
 }
 
+.bulk-modal {
+  width: min(720px, 100%);
+}
+
+.bulk-textarea {
+  display: block;
+  height: 180px;
+  min-height: 140px;
+  resize: vertical;
+  padding: 10px 11px;
+  line-height: 1.45;
+}
+
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.bulk-summary {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.bulk-list {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.bulk-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) minmax(110px, 0.5fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.bulk-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.bulk-mode {
+  min-width: 42px;
+  border-radius: 8px;
+  padding: 4px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.bulk-mode.add {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.bulk-mode.update {
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.bulk-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.bulk-before {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -823,7 +906,17 @@ button {
   }
 
   .add-account-form {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(76px, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .bulk-toolbar,
+  .bulk-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-toolbar {
+    flex-direction: column;
   }
 
   .credential-head {

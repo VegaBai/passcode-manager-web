@@ -811,6 +811,91 @@ function addCredential(state, context, payload) {
   return { credentialId: credential._id };
 }
 
+function bulkUpsertCredentials(state, context, payload) {
+  const groupId = payload.groupId;
+  enterGroup(state, groupId, context);
+
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  if (!items.length) throw new Error('请选择至少一条要添加或修改的账号');
+  if (items.length > 200) throw new Error('一次最多批量处理 200 条账号');
+
+  const activeCredentials = state.credentials.filter((item) => item.groupId === groupId && !item.deletedAt);
+  const activeById = new Map(activeCredentials.map((item) => [item._id, item]));
+  const activeByUsername = new Map(activeCredentials.map((item) => [item.username, item]));
+  const targetCredentialIds = new Set();
+  const targetUsernames = new Set();
+
+  const normalized = items.map((item) => {
+    const credentialId = String(item.credentialId || '').trim();
+    const username = String(item.username || '').trim();
+    const password = String(item.password || '').trim();
+    if (!ALNUM.test(username) || !ALNUM.test(password)) {
+      throw new Error('用户名和密码只能包含英文或数字');
+    }
+
+    const credential = credentialId ? activeById.get(credentialId) : activeByUsername.get(username);
+    if (credentialId && !credential) throw new Error('要修改的账号不存在');
+    if (credential && targetCredentialIds.has(credential._id)) throw new Error(`批量内容里重复修改了 ${credential.username}`);
+    if (targetUsernames.has(username)) throw new Error(`批量内容里有重复用户名：${username}`);
+
+    if (credential) targetCredentialIds.add(credential._id);
+    targetUsernames.add(username);
+    return { credential, username, password };
+  });
+
+  const finalUsernames = new Map(
+    activeCredentials
+      .filter((credential) => !targetCredentialIds.has(credential._id))
+      .map((credential) => [credential.username, credential])
+  );
+
+  normalized.forEach((item) => {
+    const duplicate = finalUsernames.get(item.username);
+    if (duplicate) throw new Error(`这个用户名已经存在：${item.username}`);
+    finalUsernames.set(item.username, item.credential || { username: item.username });
+  });
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  const now = nowIso();
+
+  normalized.forEach((item) => {
+    if (item.credential) {
+      if (item.credential.username === item.username && item.credential.password === item.password) {
+        skipped += 1;
+        return;
+      }
+      item.credential.username = item.username;
+      item.credential.password = item.password;
+      item.credential.updatedAt = now;
+      updated += 1;
+      return;
+    }
+
+    const credential = {
+      _id: uid('cred'),
+      groupId,
+      username: item.username,
+      password: item.password,
+      status: 'idle',
+      currentCourtName: '',
+      currentQueueEntryId: '',
+      createdByMemberId: actorId(context),
+      createdByUserId: context.user ? context.user._id : '',
+      createdByDisplayName: actorDisplayName(context),
+      createdByAuthenticated: Boolean(context.user),
+      createdAt: now,
+      updatedAt: now
+    };
+    state.credentials.push(credential);
+    added += 1;
+  });
+
+  logOperation(state, context, groupId, 'bulkUpsertCredentials', { added, updated, skipped });
+  return { added, updated, skipped };
+}
+
 function updateCredential(state, context, payload) {
   requireLoggedIn(context);
   const groupId = payload.groupId;
@@ -1155,6 +1240,7 @@ module.exports = async function handler(req, res) {
       joinGroup,
       getDashboard,
       addCredential,
+      bulkUpsertCredentials,
       updateCredential,
       deleteCredential,
       addQueueEntry,

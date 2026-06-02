@@ -19,6 +19,14 @@ const state = {
   selectedIds: new Set(),
   cancelSelectedIds: new Set(),
   modal: '',
+  bulk: {
+    rawText: '',
+    rows: [],
+    parsedCount: 0,
+    ignoredCount: 0,
+    duplicateCount: 0,
+    unchangedCount: 0
+  },
   joinGroupId: new URLSearchParams(location.search).get('group') || '',
   sortMode: localStorage.getItem('credentialSortMode') || 'default',
   queueOpen: false,
@@ -308,6 +316,121 @@ async function updateCredential() {
     state.editingCredentialId = '';
     await refreshDashboard(false);
     showToast('账号已更新');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function resetBulkState(rawText = '') {
+  state.bulk = {
+    rawText,
+    rows: [],
+    parsedCount: 0,
+    ignoredCount: 0,
+    duplicateCount: 0,
+    unchangedCount: 0
+  };
+}
+
+function openBulkModal() {
+  resetBulkState(state.bulk.rawText || '');
+  state.modal = 'bulk';
+  render();
+}
+
+function parseBulkText() {
+  const existingByUsername = new Map(state.credentials.map((item) => [item.username, item]));
+  const entriesByUsername = new Map();
+  let parsedCount = 0;
+  let ignoredCount = 0;
+  let duplicateCount = 0;
+
+  state.bulk.rawText.split(/\r?\n/).forEach((line) => {
+    const matched = line.match(/^\s*(\d+)(?:\s*[\.．。、\)、）:：]\s*|\s+)(.+)$/);
+    if (!matched) return;
+
+    const parts = matched[2].trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      ignoredCount += 1;
+      return;
+    }
+
+    const entry = {
+      sequence: matched[1],
+      username: parts[0],
+      password: parts[1]
+    };
+    parsedCount += 1;
+    if (entriesByUsername.has(entry.username)) duplicateCount += 1;
+    entriesByUsername.set(entry.username, entry);
+  });
+
+  const rows = Array.from(entriesByUsername.values()).reduce((result, entry, index) => {
+    const existing = existingByUsername.get(entry.username);
+    if (existing && existing.password === entry.password) return result;
+    result.push({
+      id: `bulk_${index}_${entry.sequence}_${entry.username}`,
+      selected: true,
+      mode: existing ? 'update' : 'add',
+      sequence: entry.sequence,
+      credentialId: existing?._id || '',
+      originalUsername: existing?.username || '',
+      originalPassword: existing?.password || '',
+      username: entry.username,
+      password: entry.password
+    });
+    return result;
+  }, []);
+
+  state.bulk.rows = rows;
+  state.bulk.parsedCount = parsedCount;
+  state.bulk.ignoredCount = ignoredCount;
+  state.bulk.duplicateCount = duplicateCount;
+  state.bulk.unchangedCount = entriesByUsername.size - rows.length;
+}
+
+function validateBulkRows(rows) {
+  if (!rows.length) return '请选择至少一条要添加或修改的账号';
+
+  const usernames = new Set();
+  for (const row of rows) {
+    if (!ALNUM.test(row.username) || !ALNUM.test(row.password)) {
+      return '用户名和密码只能包含英文或数字';
+    }
+    if (usernames.has(row.username)) {
+      return `批量列表里有重复用户名：${row.username}`;
+    }
+    usernames.add(row.username);
+  }
+  return '';
+}
+
+async function submitBulkCredentials() {
+  if (!state.currentGroup) return;
+  const selectedRows = state.bulk.rows
+    .filter((row) => row.selected)
+    .map((row) => ({
+      mode: row.mode,
+      credentialId: row.credentialId,
+      username: row.username.trim(),
+      password: row.password.trim()
+    }));
+
+  const validationMessage = validateBulkRows(selectedRows);
+  if (validationMessage) {
+    showToast(validationMessage);
+    return;
+  }
+
+  try {
+    const result = await callApi('bulkUpsertCredentials', {
+      groupId: state.currentGroup._id,
+      items: selectedRows
+    });
+    resetBulkState();
+    state.modal = '';
+    await refreshDashboard(false);
+    showToast(`已添加 ${result.added || 0} 个，已更新 ${result.updated || 0} 个`);
   } catch (error) {
     showToast(error.message);
   }
@@ -965,6 +1088,7 @@ function renderAddAccount() {
         <input id="username" class="input" maxlength="32" placeholder="用户名" aria-label="用户名" value="${html(state.form.username)}" data-field="username" />
         <input id="password" class="input" maxlength="32" placeholder="密码" aria-label="密码" value="${html(state.form.password)}" data-field="password" />
         <button class="btn primary" data-action="add-credential">确定</button>
+        <button class="btn secondary" data-action="open-bulk">批量添加</button>
       </div>
       ${state.user ? '' : '<div class="add-account-warning">仅登录后添加的密码可修改和删除</div>'}
     </div>
@@ -1233,6 +1357,50 @@ function renderEditModal() {
   `;
 }
 
+function renderBulkModal() {
+  if (state.modal !== 'bulk') return '';
+  const selectedCount = state.bulk.rows.filter((row) => row.selected).length;
+  const summaryParts = [
+    `识别 ${state.bulk.parsedCount} 条`,
+    state.bulk.unchangedCount ? `${state.bulk.unchangedCount} 条无变化` : '',
+    state.bulk.ignoredCount ? `${state.bulk.ignoredCount} 条缺少密码已忽略` : '',
+    state.bulk.duplicateCount ? `${state.bulk.duplicateCount} 个重复用户名按最后一条处理` : ''
+  ].filter(Boolean);
+
+  return `
+    <div class="overlay">
+      <div class="modal bulk-modal">
+        <h2>批量添加账号</h2>
+        <p>粘贴接龙内容后先解析，只会列出新账号和密码有变化的账号。</p>
+        <textarea class="input bulk-textarea" data-bulk-text placeholder="1. Jayx wolf79&#10;2. aa deer7">${html(state.bulk.rawText)}</textarea>
+        <div class="bulk-toolbar">
+          <div class="bulk-summary">${summaryParts.join(' · ') || '等待解析'}</div>
+          <button class="btn secondary" data-action="parse-bulk">解析粘贴内容</button>
+        </div>
+        <div class="bulk-list">
+          ${state.bulk.rows.length ? state.bulk.rows.map((row) => `
+            <div class="bulk-row">
+              <label class="bulk-check">
+                <input type="checkbox" data-bulk-select data-id="${html(row.id)}" ${row.selected ? 'checked' : ''} />
+                <span class="bulk-mode ${row.mode === 'add' ? 'add' : 'update'}">${row.mode === 'add' ? '新增' : '修改'}</span>
+              </label>
+              <div class="bulk-fields">
+                <input class="input" maxlength="32" value="${html(row.username)}" data-bulk-row-field="username" data-id="${html(row.id)}" aria-label="用户名" />
+                <input class="input" maxlength="32" value="${html(row.password)}" data-bulk-row-field="password" data-id="${html(row.id)}" aria-label="密码" />
+              </div>
+              ${row.mode === 'update' ? `<div class="bulk-before">${html(row.originalUsername)} / ${html(row.originalPassword)}</div>` : '<div class="bulk-before">新账号</div>'}
+            </div>
+          `).join('') : '<div class="empty">解析后会在这里显示需要新增或修改的账号</div>'}
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-action="close-modal">取消</button>
+          <button class="btn primary" data-action="submit-bulk" ${selectedCount ? '' : 'disabled'}>确认添加/修改</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function render() {
   app.innerHTML = `
     <header class="topbar">
@@ -1254,6 +1422,7 @@ function render() {
     ${renderCancelModal()}
     ${renderSettingsModal()}
     ${renderEditModal()}
+    ${renderBulkModal()}
   `;
   bindEvents();
   loadGoogleButton();
@@ -1298,6 +1467,28 @@ function bindEvents() {
     });
   });
 
+  app.querySelectorAll('[data-bulk-text]').forEach((input) => {
+    input.addEventListener('input', (event) => {
+      state.bulk.rawText = event.currentTarget.value;
+    });
+  });
+
+  app.querySelectorAll('[data-bulk-select]').forEach((input) => {
+    input.addEventListener('change', (event) => {
+      const row = state.bulk.rows.find((item) => item.id === event.currentTarget.dataset.id);
+      if (row) row.selected = event.currentTarget.checked;
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-bulk-row-field]').forEach((input) => {
+    input.addEventListener('input', (event) => {
+      const row = state.bulk.rows.find((item) => item.id === event.currentTarget.dataset.id);
+      const field = event.currentTarget.dataset.bulkRowField;
+      if (row && ['username', 'password'].includes(field)) row[field] = event.currentTarget.value;
+    });
+  });
+
   app.querySelectorAll('[data-action]').forEach((element) => {
     element.addEventListener('click', async (event) => {
       const action = event.currentTarget.dataset.action;
@@ -1338,6 +1529,12 @@ function bindEvents() {
         render();
       }
       if (action === 'add-credential') await addCredential();
+      if (action === 'open-bulk') openBulkModal();
+      if (action === 'parse-bulk') {
+        parseBulkText();
+        render();
+      }
+      if (action === 'submit-bulk') await submitBulkCredentials();
       if (action === 'delete-credential') await deleteCredential(event.currentTarget.dataset.id);
       if (action === 'edit-credential') {
         const credential = state.credentials.find((item) => item._id === event.currentTarget.dataset.id);
