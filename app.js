@@ -22,6 +22,7 @@ const state = {
   bulk: {
     rawText: '',
     rows: [],
+    parsed: false,
     parsedCount: 0,
     ignoredCount: 0,
     duplicateCount: 0,
@@ -329,6 +330,7 @@ function resetBulkState(rawText = '') {
   state.bulk = {
     rawText,
     rows: [],
+    parsed: false,
     parsedCount: 0,
     ignoredCount: 0,
     duplicateCount: 0,
@@ -337,7 +339,7 @@ function resetBulkState(rawText = '') {
 }
 
 function openBulkModal() {
-  resetBulkState(state.bulk.rawText || '');
+  resetBulkState();
   state.modal = 'bulk';
   render();
 }
@@ -388,6 +390,7 @@ function parseBulkText() {
   }, []);
 
   state.bulk.rows = rows;
+  state.bulk.parsed = true;
   state.bulk.parsedCount = parsedCount;
   state.bulk.ignoredCount = ignoredCount;
   state.bulk.duplicateCount = duplicateCount;
@@ -1378,7 +1381,7 @@ function renderBulkModal() {
       <div class="modal bulk-modal">
         <h2>批量添加账号</h2>
         <p>粘贴接龙内容后先解析，只会列出新账号和密码有变化的账号。</p>
-        <textarea class="input bulk-textarea" data-bulk-text placeholder="1. Jayx wolf79&#10;2. aa deer7">${html(state.bulk.rawText)}</textarea>
+        <textarea class="input bulk-textarea" data-bulk-text placeholder="请粘贴接龙内容：&#10;&#10;1. Jayx wolf79&#10;2. aa deer7">${html(state.bulk.rawText)}</textarea>
         <div class="bulk-toolbar">
           <div class="bulk-summary">${summaryParts.join(' · ') || '等待解析'}</div>
           <button class="btn secondary" data-action="parse-bulk">解析粘贴内容</button>
@@ -1396,7 +1399,7 @@ function renderBulkModal() {
               </div>
               ${row.mode === 'update' ? `<div class="bulk-before">${html(row.originalUsername)} / ${html(row.originalPassword)}</div>` : '<div class="bulk-before">新账号</div>'}
             </div>
-          `).join('') : '<div class="empty">解析后会在这里显示需要新增或修改的账号</div>'}
+          `).join('') : (state.bulk.parsed ? '<div class="bulk-empty-danger">没有新增或修改的账号</div>' : '<div class="empty">解析后会在这里显示需要新增或修改的账号</div>')}
         </div>
         <div class="modal-actions">
           <button class="btn" data-action="close-modal">取消</button>
