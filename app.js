@@ -69,6 +69,10 @@ function html(value) {
     .replaceAll("'", '&#39;');
 }
 
+function usernameKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function toDate(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -339,7 +343,7 @@ function openBulkModal() {
 }
 
 function parseBulkText() {
-  const existingByUsername = new Map(state.credentials.map((item) => [item.username, item]));
+  const existingByUsername = new Map(state.credentials.map((item) => [usernameKey(item.username), item]));
   const entriesByUsername = new Map();
   let parsedCount = 0;
   let ignoredCount = 0;
@@ -361,12 +365,13 @@ function parseBulkText() {
       password: parts[1]
     };
     parsedCount += 1;
-    if (entriesByUsername.has(entry.username)) duplicateCount += 1;
-    entriesByUsername.set(entry.username, entry);
+    const key = usernameKey(entry.username);
+    if (entriesByUsername.has(key)) duplicateCount += 1;
+    entriesByUsername.set(key, entry);
   });
 
   const rows = Array.from(entriesByUsername.values()).reduce((result, entry, index) => {
-    const existing = existingByUsername.get(entry.username);
+    const existing = existingByUsername.get(usernameKey(entry.username));
     if (existing && existing.password === entry.password) return result;
     result.push({
       id: `bulk_${index}_${entry.sequence}_${entry.username}`,
@@ -376,7 +381,7 @@ function parseBulkText() {
       credentialId: existing?._id || '',
       originalUsername: existing?.username || '',
       originalPassword: existing?.password || '',
-      username: entry.username,
+      username: existing?.username || entry.username,
       password: entry.password
     });
     return result;
@@ -397,10 +402,11 @@ function validateBulkRows(rows) {
     if (!ALNUM.test(row.username) || !ALNUM.test(row.password)) {
       return '用户名和密码只能包含英文或数字';
     }
-    if (usernames.has(row.username)) {
+    const key = usernameKey(row.username);
+    if (usernames.has(key)) {
       return `批量列表里有重复用户名：${row.username}`;
     }
-    usernames.add(row.username);
+    usernames.add(key);
   }
   return '';
 }

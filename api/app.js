@@ -206,6 +206,10 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+function usernameKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function normalizeEmailList(emails) {
   return Array.from(new Set((Array.isArray(emails) ? emails : [])
     .map(normalizeEmail)
@@ -821,7 +825,7 @@ function bulkUpsertCredentials(state, context, payload) {
 
   const activeCredentials = state.credentials.filter((item) => item.groupId === groupId && !item.deletedAt);
   const activeById = new Map(activeCredentials.map((item) => [item._id, item]));
-  const activeByUsername = new Map(activeCredentials.map((item) => [item.username, item]));
+  const activeByUsername = new Map(activeCredentials.map((item) => [usernameKey(item.username), item]));
   const targetCredentialIds = new Set();
   const targetUsernames = new Set();
 
@@ -833,26 +837,27 @@ function bulkUpsertCredentials(state, context, payload) {
       throw new Error('用户名和密码只能包含英文或数字');
     }
 
-    const credential = credentialId ? activeById.get(credentialId) : activeByUsername.get(username);
+    const key = usernameKey(username);
+    const credential = credentialId ? activeById.get(credentialId) : activeByUsername.get(key);
     if (credentialId && !credential) throw new Error('要修改的账号不存在');
     if (credential && targetCredentialIds.has(credential._id)) throw new Error(`批量内容里重复修改了 ${credential.username}`);
-    if (targetUsernames.has(username)) throw new Error(`批量内容里有重复用户名：${username}`);
+    if (targetUsernames.has(key)) throw new Error(`批量内容里有重复用户名：${username}`);
 
     if (credential) targetCredentialIds.add(credential._id);
-    targetUsernames.add(username);
-    return { credential, username, password };
+    targetUsernames.add(key);
+    return { credential, username, password, key };
   });
 
   const finalUsernames = new Map(
     activeCredentials
       .filter((credential) => !targetCredentialIds.has(credential._id))
-      .map((credential) => [credential.username, credential])
+      .map((credential) => [usernameKey(credential.username), credential])
   );
 
   normalized.forEach((item) => {
-    const duplicate = finalUsernames.get(item.username);
+    const duplicate = finalUsernames.get(item.key);
     if (duplicate) throw new Error(`这个用户名已经存在：${item.username}`);
-    finalUsernames.set(item.username, item.credential || { username: item.username });
+    finalUsernames.set(item.key, item.credential || { username: item.username });
   });
 
   let added = 0;
@@ -862,7 +867,7 @@ function bulkUpsertCredentials(state, context, payload) {
 
   normalized.forEach((item) => {
     if (item.credential) {
-      if (item.credential.username === item.username && item.credential.password === item.password) {
+      if (usernameKey(item.credential.username) === item.key && item.credential.password === item.password) {
         skipped += 1;
         return;
       }
