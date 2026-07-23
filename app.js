@@ -1,5 +1,6 @@
 const ALNUM = /^[A-Za-z0-9]+$/;
 const API_URL = '/api/app';
+const SHOW_INVITE_CODE = false;
 
 const app = document.getElementById('app');
 const toast = document.getElementById('toast');
@@ -10,6 +11,7 @@ const state = {
   memberId: ensureMemberId(),
   sessionToken: localStorage.getItem('passcode-manager-web-session') || '',
   googleClientId: '',
+  localPreview: false,
   user: null,
   storage: '',
   groups: [],
@@ -132,11 +134,11 @@ function participantCount(entry) {
   return credentialCount + externalCount;
 }
 
-function showToast(message) {
+function showToast(message, duration = 2600) {
   toast.textContent = message;
   toast.classList.add('show');
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove('show'), 2600);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), duration);
 }
 
 async function callApi(action, payload = {}) {
@@ -179,6 +181,7 @@ async function init() {
     state.googleClientId = cfg.googleClientId || '';
     const result = await callApi('init');
     state.storage = result.storage || '';
+    state.localPreview = Boolean(result.localPreview);
     state.user = result.user || null;
     state.form.displayName = state.user?.displayName || '';
     state.groups = normalizeGroups(result.groups || []);
@@ -231,7 +234,7 @@ async function refreshDashboard(withToast = true) {
 }
 
 async function createGroup() {
-  if (!state.user) {
+  if (!state.user && !state.localPreview) {
     showToast('请先登录后创建球群');
     state.modal = 'settings';
     render();
@@ -663,6 +666,14 @@ async function addQueueEntry() {
     showToast('请输入场地编号');
     return;
   }
+  const hasTrackedZeroGroup = state.queueEntries.some((entry) => {
+    return entry.courtName === courtName && entry.status === 'playing';
+  });
+  if (!hasTrackedZeroGroup && !hasManualRemainingMinutes()) {
+    showToast('请输入场上第0组剩余时间');
+    app.querySelector('[data-field="courtRemainingMinutes"]')?.focus();
+    return;
+  }
   const selectedQueueEntry = findQueueEntryByGroupNo(parseQueueGroupNo(state.form.courtQueueGroupNo));
   const selectedQueueCount = selectedQueueEntry ? participantCount(selectedQueueEntry) : 0;
   if (selectedQueueCount >= 4) {
@@ -755,6 +766,54 @@ function shareGroup() {
   );
 }
 
+function formatCourtShareItem(item, type) {
+  const courtName = `${item.courtName}${item.isHalf ? '(半)' : ''}`;
+  if (type === 'playing') return `${courtName}(余${item.minutes}m)`;
+  return item.hasMinutes !== false ? `${courtName}(${item.minutes}m后)` : courtName;
+}
+
+function buildCourtShareText() {
+  const courtStats = buildCourtStats();
+  const playingText = courtStats.playingItems.length
+    ? courtStats.playingItems.map((item) => formatCourtShareItem(item, 'playing')).join('、')
+    : '无';
+  const queuedText = courtStats.queuedItems.length
+    ? courtStats.queuedItems.map((item) => formatCourtShareItem(item, 'queued')).join('、')
+    : '无';
+  const groupName = state.currentGroup?.displayName || '羽毛球群';
+  return [
+    `【${groupName}】场地信息`,
+    `正在打：${playingText}`,
+    `排队中：${queuedText}`,
+    `更新时间：${formatPTDateTime(state.nowTs)} PT`
+  ].join('\n');
+}
+
+function copyTextFallback(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  return copied;
+}
+
+async function copyCourtInfo() {
+  if (!state.currentGroup) return;
+  const text = buildCourtShareText();
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else if (!copyTextFallback(text)) throw new Error('copy failed');
+    showToast('场地信息已复制', 3000);
+  } catch {
+    prompt('复制以下场地信息', text);
+  }
+}
+
 function buildCredentials() {
   const entriesById = Object.fromEntries(state.queueEntries.map((entry) => [entry._id, entry]));
   const statusText = { idle: '空闲', playing: '正在打', queued: '排队中' };
@@ -828,6 +887,7 @@ function buildCourtStats() {
       return {
         courtName,
         isHalf: (entry.credentialIds || []).length === 2,
+        groupNo: entry.groupNo,
         hasMinutes,
         minutes: hasMinutes ? minutesUntil(entry.startAt) : 0,
         key: entry._id
@@ -983,6 +1043,7 @@ function renderEmptyState() {
   return `
     <section class="section">
       <h2 class="section-title">创建第一个球群</h2>
+      ${state.localPreview ? '<div class="local-preview-note">本地预览模式：无需登录，可直接创建球群查看完整页面。</div>' : ''}
       <div class="inline-form">
         <div class="field">
           <label for="first-group-name">球群名称</label>
@@ -1008,17 +1069,22 @@ function renderDashboard() {
   const courtPreview = buildCourtPreview();
 
   return `
-    <section class="section invite-card">
-      <div class="invite-row">
-        <span class="invite-label">邀请码</span>
-        <span class="invite-code">${html(state.currentGroup.shortId || state.currentGroup._id)}</span>
-        ${state.currentGroup.canManageGroup ? '<button class="btn icon settings-button" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
-      </div>
-    </section>
+    ${SHOW_INVITE_CODE ? `
+      <section class="section invite-card">
+        <div class="invite-row">
+          <span class="invite-label">邀请码</span>
+          <span class="invite-code">${html(state.currentGroup.shortId || state.currentGroup._id)}</span>
+          ${state.currentGroup.canManageGroup ? '<button class="btn icon settings-button" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
+        </div>
+      </section>
+    ` : ''}
 
     <div class="content-grid">
       <section>
-        <button class="btn refresh-above-courts" data-action="refresh"><span class="refresh-icon ${state.loading ? 'is-spinning' : ''}" aria-hidden="true">↻</span>${state.loading ? '刷新中' : '刷新'}</button>
+        <div class="court-action-row">
+          <button class="btn refresh-above-courts" data-action="refresh"><span class="refresh-icon ${state.loading ? 'is-spinning' : ''}" aria-hidden="true">↻</span>${state.loading ? '刷新中' : '刷新'}</button>
+          <button class="btn secondary copy-court-info" data-action="copy-court-info"><span aria-hidden="true">⧉</span>分享场地信息</button>
+        </div>
         <h2 class="section-title">
           <span>场地</span>
           <span class="section-hint">手动录入可能与球馆系统有时间误差</span>
@@ -1116,10 +1182,11 @@ function renderAccountList(credentials) {
           <option value="createdDesc" ${state.sortMode === 'createdDesc' ? 'selected' : ''}>添加时间 晚到早</option>
         </select>
       </div>
-      ${credentials.length ? credentials.map((item) => `
+      ${credentials.length ? credentials.map((item, index) => `
         <article class="credential-card">
           <div class="credential-head">
             <div class="credential-line">
+              <span class="credential-index">${index + 1}.</span>
               <span class="credential-name">${html(item.username)}</span>
               ${item.canManage ? `<button class="edit-icon-button" title="修改账号" data-action="edit-credential" data-id="${html(item._id)}">✎</button>` : ''}
               ${item.canDelete ? `<button class="delete-icon-button" title="删除账号" data-action="delete-credential" data-id="${html(item._id)}">×</button>` : ''}
@@ -1430,7 +1497,7 @@ function render() {
               </div>
             </div>
             <div class="toolbar">
-              <button class="header-button" data-action="open-groups" ${state.user ? '' : 'disabled'}>切换球群</button>
+              <button class="header-button" data-action="open-groups" ${state.user || state.localPreview ? '' : 'disabled'}>切换球群</button>
               <button class="header-button share-button" data-action="share" ${state.currentGroup ? '' : 'disabled'}><span aria-hidden="true">↗</span>分享链接</button>
               <button class="header-button" data-action="open-settings">${state.user ? html(state.user.displayName || state.user.email) : '登录'}</button>
             </div>
@@ -1438,8 +1505,9 @@ function render() {
           <div class="current-group-bar">
             <span class="current-group-label">当前球群</span>
             <span class="current-group-name">${state.currentGroup ? html(state.currentGroup.displayName) : '选择或创建一个球群'}</span>
-            ${state.storage === 'memory' ? '<span class="header-note">本地内存模式</span>' : ''}
-            ${state.user ? '' : '<span class="header-note">登录后可管理球群</span>'}
+            ${state.localPreview ? '<span class="header-note">本地预览模式</span>' : (state.storage === 'memory' ? '<span class="header-note">本地内存模式</span>' : '')}
+            ${state.user || state.localPreview ? '' : '<span class="header-note">登录后可管理球群</span>'}
+            ${state.currentGroup?.canManageGroup && !SHOW_INVITE_CODE ? '<button class="header-group-settings" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
           </div>
         </div>
       </div>
@@ -1522,8 +1590,9 @@ function bindEvents() {
     element.addEventListener('click', async (event) => {
       const action = event.currentTarget.dataset.action;
       if (action === 'refresh') await refreshDashboard();
+      if (action === 'copy-court-info') await copyCourtInfo();
       if (action === 'open-groups') {
-        if (!state.user) {
+        if (!state.user && !state.localPreview) {
           showToast('登录后可以切换参与过的球群');
           return;
         }

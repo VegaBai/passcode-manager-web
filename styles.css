@@ -262,6 +262,27 @@ input:disabled,
   white-space: nowrap;
 }
 
+.header-group-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  padding: 0;
+  line-height: 1;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.header-group-settings:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
 /* Cards and headings */
 .section,
 .panel,
@@ -526,10 +547,17 @@ input[type="radio"] {
 }
 
 /* Courts */
+.court-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
 .refresh-above-courts {
   width: 100%;
   min-height: 42px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
   border-color: #fed7aa;
   border-radius: var(--radius-card);
   background: #fff7ed;
@@ -550,6 +578,13 @@ input[type="radio"] {
 
 .refresh-icon.is-spinning {
   animation: spin 800ms linear infinite;
+}
+
+.copy-court-info {
+  width: 100%;
+  min-height: 42px;
+  border-radius: var(--radius-card);
+  font-weight: 600;
 }
 
 @keyframes spin {
@@ -861,6 +896,16 @@ input[type="radio"] {
   gap: 8px;
   min-width: 0;
   padding-top: 3px;
+}
+
+.credential-index {
+  flex: none;
+  min-width: 2.5ch;
+  color: var(--muted-2);
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
 }
 
 .credential-name {
@@ -1277,6 +1322,17 @@ input[type="radio"] {
 .join-banner {
   border-color: rgba(27, 107, 71, 0.2);
   background: var(--brand-soft);
+}
+
+.local-preview-note {
+  margin: -1px 0 12px;
+  border: 1px solid rgba(27, 107, 71, 0.16);
+  border-radius: var(--radius-control);
+  background: var(--brand-soft);
+  color: var(--brand);
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .hidden {

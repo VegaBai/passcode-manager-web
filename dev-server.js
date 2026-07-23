@@ -45,6 +45,7 @@ function serveStatic(req, res) {
 }
 
 const server = http.createServer((req, res) => {
+  req.localPreview = true;
   if (req.url.startsWith('/api')) {
     apiHandler(req, res);
     return;

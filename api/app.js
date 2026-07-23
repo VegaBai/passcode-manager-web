@@ -717,25 +717,27 @@ function init(state, context) {
     memberId: context.memberId,
     user: publicUser(context.user, state),
     groups: listGroups(state, context),
-    storage: storageMode()
+    storage: storageMode(),
+    localPreview: Boolean(context.localPreview)
   };
 }
 
 function createGroup(state, context, payload) {
-  requireLoggedIn(context);
+  if (!context.localPreview) requireLoggedIn(context);
   const name = String(payload.name || '').trim();
   if (!name) throw new Error('请输入球群名称');
   const id = actorId(context);
-  const email = normalizeEmail(context.user.email);
+  const email = normalizeEmail(context.user?.email);
+  const userId = context.user?._id || '';
 
   const group = {
     _id: uid('grp'),
     name,
     ownerMemberId: id,
-    ownerUserId: context.user._id,
+    ownerUserId: userId,
     ownerEmail: email,
-    adminUserIds: [context.user._id],
-    adminEmails: SUPER_ADMIN_EMAILS.has(email) ? [] : [email],
+    adminUserIds: userId ? [userId] : [],
+    adminEmails: !email || SUPER_ADMIN_EMAILS.has(email) ? [] : [email],
     memberIds: [id],
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -1187,14 +1189,15 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function buildContext(state, memberId, token) {
+function buildContext(state, memberId, token, localPreview = false) {
   const session = token ? state.sessions.find((item) => item.token === token) : null;
   const user = session ? getDoc(state, 'users', session.userId) : null;
   if (session) session.lastSeenAt = nowIso();
   return {
     memberId,
     sessionToken: token || '',
-    user: user || null
+    user: user || null,
+    localPreview: Boolean(localPreview)
   };
 }
 
@@ -1227,7 +1230,12 @@ module.exports = async function handler(req, res) {
     if (!memberId) throw new Error('缺少用户标识，请刷新页面重试');
 
     const state = await loadState();
-    const context = buildContext(state, memberId, String(body.sessionToken || payload.sessionToken || '').trim());
+    const context = buildContext(
+      state,
+      memberId,
+      String(body.sessionToken || payload.sessionToken || '').trim(),
+      req.localPreview === true
+    );
     const actions = {
       config,
       loginGoogle,
