@@ -1008,20 +1008,17 @@ function renderDashboard() {
   const courtPreview = buildCourtPreview();
 
   return `
-    <section class="section">
-      <div class="group-row">
-        <div class="group-label">球群</div>
-        <div class="group-name">${html(state.currentGroup.displayName)}</div>
-        <div class="invite-code">邀请码 ${html(state.currentGroup.shortId || state.currentGroup._id)}</div>
-        ${state.currentGroup.canManageGroup ? '<button class="btn icon" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
+    <section class="section invite-card">
+      <div class="invite-row">
+        <span class="invite-label">邀请码</span>
+        <span class="invite-code">${html(state.currentGroup.shortId || state.currentGroup._id)}</span>
+        ${state.currentGroup.canManageGroup ? '<button class="btn icon settings-button" title="球群设置" aria-label="球群设置" data-action="open-group-settings">⚙</button>' : ''}
       </div>
     </section>
 
-    <div class="divider"></div>
-
     <div class="content-grid">
       <section>
-        <button class="btn refresh-above-courts" data-action="refresh"><span class="refresh-icon" aria-hidden="true">↻</span>${state.loading ? '刷新中' : '刷新'}</button>
+        <button class="btn refresh-above-courts" data-action="refresh"><span class="refresh-icon ${state.loading ? 'is-spinning' : ''}" aria-hidden="true">↻</span>${state.loading ? '刷新中' : '刷新'}</button>
         <h2 class="section-title">
           <span>场地</span>
           <span class="section-hint">手动录入可能与球馆系统有时间误差</span>
@@ -1058,9 +1055,9 @@ function renderDashboard() {
 
 function renderQueuePanel(idleCredentials, courtPreview) {
   return `
-    <div class="section">
+    <div class="section queue-panel">
       <h3 class="section-title">排队</h3>
-      <div class="warning">本系统无法自动获取场地信息，请确保输入准确</div>
+      <div class="warning">⚠ 本系统无法自动获取场地信息，请确保输入准确</div>
       <div class="inline-form queue-form">
         <div class="field court">
           <label for="court-name">场地号</label>
@@ -1094,10 +1091,14 @@ function renderAddAccount() {
     <div class="section add-account-section">
       <h3 class="section-title">添加账号</h3>
       <div class="inline-form add-account-form">
-        <input id="username" class="input" maxlength="32" placeholder="用户名" aria-label="用户名" value="${html(state.form.username)}" data-field="username" />
-        <input id="password" class="input" maxlength="32" placeholder="密码" aria-label="密码" value="${html(state.form.password)}" data-field="password" />
-        <button class="btn primary" data-action="add-credential">确定</button>
-        <button class="btn secondary" data-action="open-bulk">批量添加</button>
+        <div class="add-account-fields">
+          <input id="username" class="input" maxlength="32" placeholder="用户名" aria-label="用户名" value="${html(state.form.username)}" data-field="username" />
+          <input id="password" class="input" maxlength="32" placeholder="密码" aria-label="密码" value="${html(state.form.password)}" data-field="password" />
+        </div>
+        <div class="add-account-actions">
+          <button class="btn primary" data-action="add-credential">确定</button>
+          <button class="btn secondary" data-action="open-bulk">批量添加</button>
+        </div>
       </div>
       ${state.user ? '' : '<div class="add-account-warning">仅登录后添加的密码可修改和删除</div>'}
     </div>
@@ -1413,15 +1414,34 @@ function renderBulkModal() {
 function render() {
   app.innerHTML = `
     <header class="topbar">
-      <div>
-        <h1 class="title">羽毛球 Drop-in 排队管理</h1>
-        <div class="subtitle">${state.currentGroup ? html(state.currentGroup.displayName) : '选择或创建一个球群'}${state.storage === 'memory' ? ' · 本地内存模式' : ''}</div>
-      </div>
-      <div class="toolbar">
-        <button class="btn secondary" data-action="open-groups" ${state.user ? '' : 'disabled'}>切换球群</button>
-        <button class="btn primary" data-action="share" ${state.currentGroup ? '' : 'disabled'}>分享链接</button>
-        <button class="btn" data-action="open-settings">${state.user ? html(state.user.displayName || state.user.email) : '登录'}</button>
-        ${state.user ? '' : '<div class="login-required-note">登录后可切换球群、添加新球群页面</div>'}
+      <div class="brand-header">
+        <div class="brand-header-content">
+          <div class="brand-header-top">
+            <div class="brand-lockup">
+              <svg class="shuttlecock-mark" width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="20" cy="33" rx="5" ry="4" fill="currentColor" opacity=".9" />
+                <ellipse cx="20" cy="31" rx="4" ry="2.5" fill="currentColor" opacity=".6" />
+                <path d="M20 29 8 8M20 29 12 6M20 29 17 5M20 29 20 5M20 29 23 5M20 29 28 6M20 29 32 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                <path d="M8 9Q20 3 32 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".5" />
+              </svg>
+              <div>
+                <h1 class="title">羽毛球 Drop-in</h1>
+                <div class="subtitle">排队管理</div>
+              </div>
+            </div>
+            <div class="toolbar">
+              <button class="header-button" data-action="open-groups" ${state.user ? '' : 'disabled'}>切换球群</button>
+              <button class="header-button share-button" data-action="share" ${state.currentGroup ? '' : 'disabled'}><span aria-hidden="true">↗</span>分享链接</button>
+              <button class="header-button" data-action="open-settings">${state.user ? html(state.user.displayName || state.user.email) : '登录'}</button>
+            </div>
+          </div>
+          <div class="current-group-bar">
+            <span class="current-group-label">当前球群</span>
+            <span class="current-group-name">${state.currentGroup ? html(state.currentGroup.displayName) : '选择或创建一个球群'}</span>
+            ${state.storage === 'memory' ? '<span class="header-note">本地内存模式</span>' : ''}
+            ${state.user ? '' : '<span class="header-note">登录后可管理球群</span>'}
+          </div>
+        </div>
       </div>
     </header>
     ${renderJoinBanner()}
