@@ -1163,7 +1163,7 @@ function renderAddAccount() {
         </div>
         <div class="add-account-actions">
           <button class="btn primary" data-action="add-credential">确定</button>
-          <button class="btn secondary" data-action="open-bulk">批量添加</button>
+          <button class="btn secondary" data-action="open-bulk">粘贴接龙内容</button>
         </div>
       </div>
       ${state.user ? '' : '<div class="add-account-warning">仅登录后添加的密码可修改和删除</div>'}
